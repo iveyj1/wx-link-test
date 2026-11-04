@@ -1,0 +1,146 @@
+import json
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from urllib.request import urlopen
+from urllib.error import HTTPError
+from http.server import ThreadingHTTPServer
+from monitor import decode
+from web_server import Store, handler_for
+
+
+def packet(revs=1, seq=1, age=328, session='abcd1234', uptime=100000):
+    payload = f'W2,{session},{seq},{2*revs+1},{revs},32768,8192,24576,{age},{age},{uptime}'
+    return decode(f'+RCV=1,{len(payload)},{payload},-28,13')
+
+
+class WebTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.store = Store(Path(self.temp.name)/'history.db')
+
+    def tearDown(self):
+        self.store.db.close()
+        self.temp.cleanup()
+
+    def test_measurement_and_heartbeat(self):
+        now = time.time()
+        self.store.accept(packet(), now)
+        self.store.accept(packet(seq=2, age=328+60*32768, uptime=3000000), now+60)
+        result = self.store.query(after=0)
+        self.assertEqual(len(result['points']), 1)
+        self.assertEqual(result['points'][0]['hz'], 1)
+        self.assertEqual(result['latest']['revolutions'], '1')
+        self.assertAlmostEqual(result['latest']['measured_at'], now-328/32768)
+        self.assertEqual(result['points'][0]['imbalance'], -50)
+        self.store.accept(packet(revs=2, seq=3, uptime=4000000), now+61)
+        self.assertEqual(len(self.store.query(after=result['cursor'])['points']), 1)
+
+    def test_restart_and_persistence(self):
+        now = time.time()
+        self.store.accept(packet(), now)
+        first = self.store.latest['stream']
+        self.store.accept(packet(session='ffffffff'), now+5)
+        self.assertNotEqual(first, self.store.latest['stream'])
+        second = Store(Path(self.temp.name)/'history.db')
+        try:
+            second.accept(packet(session='ffffffff', seq=2), now+6)
+            self.assertEqual(len(second.query(after=0)['points']), 2)
+            self.assertFalse(second.connected)
+        finally:
+            second.db.close()
+
+    def test_w3_packets_logged(self):
+        now = time.time()
+        self.store.accept(packet(), now)
+        payload = 'W3,abcd1234,2,3,1,32768,8192,24576,1966408,1966408,2100000,1,1966080,9'
+        self.store.accept(decode(f'+RCV=1,{len(payload)},{payload},-90,7'), now+60)
+        rows = self.store.db.execute('SELECT version,seq,pin,pin_age,raw_edges,rssi FROM packets ORDER BY id').fetchall()
+        self.assertEqual([tuple(r) for r in rows],
+                         [('W2', 1, None, None, None, -28), ('W3', 2, 1, '1966080', '9', -90)])
+        self.assertEqual(self.store.latest['raw_edges'], '9')
+        self.assertEqual(self.store.latest['pin_age_s'], 60)
+        self.assertEqual(len(self.store.query(after=0)['points']), 1)  # heartbeat: no new graph point
+
+    def test_w4_clock_logged(self):
+        payload = 'W4,abcd1234,1,3,1,32768,8192,24576,328,328,100000,0,1966080,9,1'
+        self.store.accept(decode(f'+RCV=1,{len(payload)},{payload},-90,7'))
+        self.assertEqual(self.store.db.execute('SELECT version,clock FROM packets').fetchone()[:], ('W4', 1))
+        self.assertEqual(self.store.latest['clock'], 1)
+
+    def w5(self, seq, tips, age=328, interval=0, received=None, session='abcd1234', count=3, uptime=100000):
+        f = lambda n: format(n, 'x')
+        rain_age = 2**64-1 if tips == 0 else age
+        payload = (f'W5,{session},{f(seq)},{f(count)},2000,6000,148,148,{f(uptime)},1,'
+                   f'ffffffffffffffff,{f(count)},0,{f(tips)},{f(interval)},{f(rain_age)},0,{f(tips+4)}')
+        assert len(payload) <= 240
+        self.store.accept(decode(f'+RCV=1,{len(payload)},{payload},-80,9'), received)
+
+    def test_w5_rain_tips_and_loss_recovery(self):
+        now = 1_800_000_000.0
+        self.w5(1, 0, received=now)
+        self.w5(2, 1, received=now+10)                      # first tip: no interval yet
+        self.w5(5, 4, interval=32768*30, received=now+100)  # 2 packets lost: 3 tips recovered
+        self.w5(6, 4, age=32768*60, interval=32768*30, received=now+160)  # heartbeat: no row
+        rows = self.store.db.execute('SELECT t,tips,added,interval FROM rain ORDER BY id').fetchall()
+        self.assertEqual([tuple(r) for r in rows],
+                         [(now+10-328/32768, '1', 1, None), (now+100-328/32768, '4', 3, 30.0)])
+        latest = self.store.latest
+        self.assertEqual((latest['rain_tips'], latest['rain_interval_s'], latest['rain_raw_edges']), ('4', 30.0, '8'))
+        self.assertAlmostEqual(latest['rain_at'], now+100-328/32768)
+        self.assertEqual(latest['revolutions'], '1')
+        self.assertEqual((latest['interval_a'], latest['period_s']), (0x2000, 1.0))  # hex fields
+        result = self.store.rain(now, now+1000)
+        self.assertEqual(sum(r['added'] for r in result['tips']), 4)
+        self.assertEqual(self.store.rain(now+50, now+1000)['tips'][0]['added'], 3)
+        # Sensor restart: count restarts from 0; tips since boot are all new.
+        self.w5(1, 2, interval=32768, received=now+200, session='ffffffff', uptime=200000)
+        self.assertEqual(sum(r['added'] for r in self.store.rain(now, now+1000)['tips']), 6)
+
+    def test_w5_rain_only_report_is_not_a_wind_sample(self):
+        self.w5(1, 0)
+        self.w5(2, 1)
+        self.assertEqual(len(self.store.query(after=0)['points']), 1)
+
+    def test_w5_validation(self):
+        good = 'W5,abcd1234,1,3,2000,6000,148,148,186a0,1,ffffffffffffffff,3,0,0,0,ffffffffffffffff,1,0'
+        self.assertEqual(decode(f'+RCV=1,{len(good)},{good},-80,9')['rain_tips'], 0)
+        for bad in (good.replace(',0,ffffffffffffffff,1,0', ',1,ffffffffffffffff,1,1'),  # tips but no age
+                    good.replace('186a0', '186A0'), good.replace(',3,2000', ',2,2000'),
+                    good + ',0', good.replace(',1,0', ',1,0x')):
+            with self.assertRaises(ValueError, msg=bad):
+                decode(f'+RCV=1,{len(bad)},{bad},-80,9')
+
+    def test_unknown_period(self):
+        payload = 'W2,abcd1234,1,0,0,0,0,0,18446744073709551615,18446744073709551615,50000'
+        self.store.accept(decode(f'+RCV=1,{len(payload)},{payload},-28,13'))
+        self.assertIsNone(self.store.latest['hz'])
+        self.assertEqual(self.store.query(after=0)['points'], [])
+
+    def test_http(self):
+        self.store.accept(packet())
+        server = ThreadingHTTPServer(('127.0.0.1',0), handler_for(self.store))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        base = f'http://127.0.0.1:{server.server_port}'
+        try:
+            with urlopen(base+'/api/live?after=0') as response:
+                self.assertEqual(json.load(response)['points'][0]['hz'], 1)
+            with urlopen(base+'/') as response:
+                self.assertIn(b'Anemometer helicorder', response.read())
+            with urlopen(base+'/math.js') as response:
+                self.assertIn(b'niceScale', response.read())
+                self.assertIn('javascript', response.headers['Content-Type'])
+            with urlopen(base+'/api/rain?start=0&end=86400') as response:
+                self.assertEqual(json.load(response)['tips'], [])
+            for query in ('/api/rain?start=0', '/api/rain?start=0&end=9999999', '/api/history?start=nan&end=1', '/api/history?start=0&end=50000', '/api/live?after=-1', '/../../etc/passwd'):
+                with self.assertRaises(HTTPError):
+                    urlopen(base+query)
+        finally:
+            server.shutdown(); server.server_close(); thread.join()
+
+
+if __name__ == '__main__':
+    unittest.main()

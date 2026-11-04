@@ -1,0 +1,14 @@
+[Unit]
+Description=Anemometer LAN helicorder and serial recorder
+After=network.target
+
+[Service]
+WorkingDirectory=/home/user/wx-link-test
+ExecStart=/home/user/.local/bin/venv/bin/python /home/user/wx-link-test/web_server.py
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

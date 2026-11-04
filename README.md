@@ -1,0 +1,131 @@
+# wx-link-test: Feather M0 / RYLR998 wind and rain link
+
+A battery sensor counts anemometer and tipping-bucket rain-gauge reed closures and reports them over LoRa. A USB-attached receiver forwards packets to a host, which records them in SQLite and serves a live LAN dashboard.
+
+The sensor runs firmware **W5-rain2**. The receiver runs the same sketch built with `SENSOR=0`.
+
+## Hardware
+
+| Role | Feather M0 USB serial ID | LoRa address |
+|---|---|---|
+| Sensor | `8FFE7CD9514D4D5447202020FF01092A` | 1 |
+| Receiver | `B55AB548514D4D5447202020FF012F18` | 2 |
+
+Use `/dev/serial/by-id/usb-Adafruit_Feather_M0_<ID>-if00` for monitoring; `ttyACMn` numbers change.
+
+Sensor wiring (all inputs use the internal pull-up, active low):
+
+| Pin | Connection |
+|---|---|
+| D5 (PA15, EXTINT15) | Anemometer reed to GND: two closures per revolution |
+| D10 (PA18, EXTINT2) | Rain-gauge reed to GND: one ~100 ms closure per tip |
+| D6 | RYLR998 NRST (active low); harmless if unwired |
+| D0 / D1 | RYLR998 TXD / RXD (radio UART, 115200 baud) |
+
+Radio: 915 MHz, SF7, BW 500 kHz, CR 4/5, preamble 12, network 18, 2 dBm (configured and read back at startup; not a regulatory assessment). Do not use D9: it is the Feather's battery-voltage divider.
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `link/link.ino` | Firmware for both roles (`-DSENSOR=1/0`) |
+| `link/PulseCounter.h` | Wind reed debounce and revolution pairing |
+| `link/TipCounter.h` | Rain reed debounce and tip counting |
+| `link/ReportSchedule.h` | Report triggering, 1 s cooldown, 5 s backoff, 60 s heartbeat |
+| `link/RadioUart.h` | Bounded polled UART transmit (see *Lessons learned*) |
+| `link/Diagnostics.h`, `retained.ld` | Execution-stage breadcrumb kept in `.noinit` RAM across resets |
+| `monitor.py` | Packet decoder (W1–W5) and terminal monitor |
+| `web_server.py` | Serial reader, SQLite store, HTTP API, static dashboard |
+| `web/index.html`, `web/math.js` | Dashboard (no external JS/CSS) |
+| `deploy/anemometer-web.service` | systemd user unit for the dashboard |
+| `test_*.cpp`, `test_*.py`, `test_display.js` | Native, Python and JS tests |
+
+## Build, test, flash
+
+Requires the Arduino CLI with Adafruit SAMD core 1.7.17, `g++`, Python 3 with `pyserial`, and Node.
+
+```sh
+./build.sh            # compiles both roles into build/{sensor,receiver}, then runs all native and Python tests
+python -m unittest test_web
+node test_display.js
+CLI=/home/user/pnp/Arduino/arduino-cl/bin/arduino-cli
+$CLI board list       # confirm which ttyACM is which
+$CLI upload -p /dev/ttyACM1 --fqbn adafruit:samd:adafruit_feather_m0 --input-dir build/sensor
+$CLI upload -p /dev/ttyACM0 --fqbn adafruit:samd:adafruit_feather_m0 --input-dir build/receiver
+```
+
+* Always build with `./build.sh`: it adds `retained.ld`, without which the breadcrumb is cleared at startup (`test_trace_layout.py` checks placement).
+* Upload to the real `ttyACMn`, not the by-id link. The first attempt sometimes misses the bootloader; retry.
+* A board stuck in the bootloader (USB ID `239a:000b`) with intact firmware restarts with `bossac -p ttyACMn -R` (reset only, no write).
+
+## Dashboard service
+
+```sh
+cp deploy/anemometer-web.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now anemometer-web
+journalctl --user -u anemometer-web -f
+```
+
+Serves `http://<host>:8765/` on all interfaces, read-only, **without authentication or TLS**: trusted LAN only. The service owns the receiver port; stop it before running `python monitor.py`. History is in `data/wind.sqlite3` (not in git):
+
+| Table | Contents | Retention |
+|---|---|---|
+| `samples` | One row per completed revolution received (graph points) | 7 days |
+| `packets` | Every packet, heartbeats included: link continuity, reed and clock diagnostics | 7 days |
+| `rain` | One row per packet whose tip count rose (`added` new tips) | 400 days |
+| `state` | Latest decoded packet | — |
+
+API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h), `/api/rain?start=&end=` (≤ 32 days). No `sqlite3` CLI is installed here; query with Python.
+
+## Measurement design
+
+### Wind
+* **Timebase:** RTC at 32 768 Hz from the crystal, extended to 64 bits in software, so intervals have no wrap limit.
+* **Debounce:** each D5 change restarts a 328-tick (10.0 ms) one-shot; a level must hold that long to count. The timestamp is the last edge before the stable interval.
+* **Revolutions:** the first closure after boot is the reference; closures 3, 5, 7… complete revolutions. A and B are the two half-intervals; period = A + B. No equal-spacing assumption; A/B labels can swap after a restart. A closure held at boot is not counted.
+* **Speed:** Hz = 1/period of the latest *completed* revolution; RPM = 60 × Hz; knots = max(0, gain × Hz + offset), with the calibration entered per browser (wind is **uncalibrated**: a provisional 1 kn/Hz is shown with a warning).
+
+### Rain
+* Each debounced D10 closure is one tip; the reopening is ignored. The default calibration is **0.3690 mm/tip**: 2 ml per tip over a 49.5 × 109.5 mm funnel (2000 mm³ ÷ 5420.25 mm²). Check it by pouring a known volume (100 ml ≈ 50 tips ≈ 18.4 mm).
+* The dashboard shows the total from local midnight to midnight, hourly bars, and rate = mm/tip ÷ max(last tip interval, time since last tip). That rate decays during dry spells and shows 0 after 1 h without a tip.
+
+### Reporting and packets
+* A completed revolution or a rain tip triggers a report immediately, limited to one send per second (from completion), with a 5 s backoff after a failure and a 60 s heartbeat otherwise. Events during the cooldown are coalesced.
+* **Counts are cumulative since boot**, so a lost packet loses no pulses or tips; the next packet carries the totals. Counts are RAM-only and restart with a new session ID on reset.
+* **W5 payload** (all numbers lowercase hex, worst case 230 bytes, under the radio's 240-byte limit): `W5,session,seq,count,A,B,age,rev_age,uptime,pin,pin_age,raw_edges,clock,rain_tips,rain_interval,rain_age,rain_pin,rain_raw_edges`. Revolutions and period are derived by the decoder. Ages of `ffffffffffffffff` mean "never". `pin` = 1 is open, `clock` = 1 is the internal fallback. The receiver forwards `+RCV=1,len,payload,RSSI,SNR`. The decoder still accepts W1–W4.
+
+### Dashboard display rules
+* Gaps are not zero wind: lines break only on missing revolutions, sensor restarts or no data.
+* **Deduced calm (display only):** a half-revolution longer than 20 s means < 1.5 RPM, below resolution. The page draws 0 (hollow dots, dashed line) from 20 s after that half began until the closure that ended it, instead of the spanning revolution's meaningless average. A provisional zero is drawn live. A dashed zero during obvious wind points to a missed closure (wiring), not calm.
+* Strip average is time-weighted (revolutions ÷ time, calm = 0); min/max come from real points.
+
+## Lessons learned (why the firmware looks like this)
+
+* **Never block forever.** The original sensor hung in `Serial1.flush()`. Adafruit SAMD core 1.7.17 acknowledges UART errors with a read-modify-write of the write-1-to-clear `INTFLAG`, which can clear TXC, so the wait for TXC never ended. `RadioUart` bypasses the TX ring, waits for DRE, then for TXC **or** two character times (`txc_inferred` counts the latter), with deadlines throughout. RTC syncs are also bounded, and a 16 s watchdog (GCLK4 = OSCULP32K) backs everything up.
+* **RTC compare fires only on equality.** If COUNT passes COMP during the write sync, the next match is 2³² ticks (~36 h) away. `debounceArm()` uses a margin, re-reads COUNT after writing, and re-arms (`compare_rearms`).
+* **The 32 kHz crystal can stop** (condensation on the PCB, Nov 3: 3 h outage). The RTC and reed EIC froze while the CPU ran, so the watchdog never fired, and a reset would not help because startup waits for the crystal. The firmware now detects 8 s without an RTC interrupt, moves RTC/EIC to the internal OSC32K (GCLK5), adds the frozen time back from `millis()`, retries the crystal every 10 min, and flags `clock=1`. Never write RTC registers while a sync is stuck: it stalls the bus. Keep the PCB dry (sealed enclosure, desiccant, conformal coat).
+* **Radio recovery:** after 3 consecutive failed reports the sensor pulses RYLR998 NRST on D6 and reconfigures it. Do not query the radio's mode right after `AT+MODE=1`: the query wakes it.
+* **Reed wiring is the usual fault.** Gaps that ended in one long half-interval were the reed or its wires, not the firmware. The raw-edge counters separate the cases: `pin=1` with no new edges is open or disconnected; `pin=0` with no new edges is held closed; raw edges rising faster than 2 per counted closure is chatter. Chatter that survives the 10 ms debounce shows up as "double-speed" readings with a short A or B.
+* **Standby:** MCU deep standby is disabled (light sleep only) and the SAMD21 flash-standby erratum workaround (`NVMCTRL.CTRLB.SLEEPPRM = DISABLED`) is kept. Battery life has not been measured; re-enabling standby needs a long battery soak.
+* **Breadcrumbs:** `Diagnostics.h` records the current execution stage in `.noinit` RAM. After an unexplained reset, read `!status` *before* any other reset to get `previous_trace` (not valid after power loss). Reset cause bits: POR 0x01, BOD12 0x02, BOD33 0x04, external 0x10, watchdog 0x20, software 0x40.
+* **USB replies are gated:** the firmware only writes to USB after seeing USB frames, rechecked about every 5 s. Wait about 7 s after opening the port before sending a command.
+* **Keep the project in git with a remote.** The working directory was once deleted with `rm -rf`; it was rebuilt from session transcripts and the Arduino build cache, and two tests had to be rewritten.
+
+## USB commands (sensor, 115200 baud, newline terminated)
+
+| Command | Effect |
+|---|---|
+| `!status` | Counts, raw D5/D10 state and edges, radio/UART/RTC/clock counters, reset cause, previous-boot breadcrumb |
+| `!report` | Send a report now (bypasses the cooldown) |
+| `!uart-test` | Inject one UART completion timeout; expect recovery and a retry about 5 s later |
+| `!xosc-test` | Stop the crystal for 90 s; expect failover to the internal clock within ~8 s |
+| `!clock-retry` | Retry the crystal now |
+| `!diag-reset` | Software reset to test breadcrumb retention (**resets counts**) |
+| `!led on` / `!led off` | Identify the board |
+
+## Open items
+
+* Wind calibration (gain/offset) has not been measured.
+* The rain calibration is a geometric estimate; verify with a known volume.
+* Power consumption and battery life are unmeasured; deep standby remains disabled.
+* RF margin outdoors was marginal at times (RSSI ≈ −100 dBm); there is no acknowledgement or retransmit beyond cumulative counts.

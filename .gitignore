@@ -1,0 +1,6 @@
+# Build outputs (./build.sh) and native test binaries
+build/
+# Live SQLite history written by web_server.py
+data/
+__pycache__/
+*.pyc

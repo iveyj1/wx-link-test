@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wind and Rain</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='none' stroke='%2370e8c2' stroke-width='3' d='M1 20L8 20L12 7L18 26L23 12L31 12'/%3E%3C/svg%3E">
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0c1520;color:#e6eef6}*{box-sizing:border-box}body{margin:0}main{max-width:1600px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:24px;margin:0}h2{font-size:17px;margin:0}.eyebrow{font-size:12px;letter-spacing:2px;color:#78a9c6;text-transform:uppercase}.muted,small{color:#9cafbf}.status{padding:8px 14px;border:1px solid #354b60;border-radius:20px;font-size:13px}.ok{color:#71e8b0}.warn{color:#ffc77c}.cards{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:14px;margin:24px 0}.card{background:#142230;border:1px solid #253b4e;border-radius:12px;padding:18px;min-width:0}.number{font-size:34px;font-variant-numeric:tabular-nums;margin:8px 0}.primary .number{font-size:48px;color:#70e8c2}.number small{font-size:16px}.caption{font-size:12px;color:#9cafbf;overflow-wrap:anywhere}.controls{display:flex;flex-wrap:wrap;align-items:end;gap:14px;padding:18px 0}label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#9cafbf}input,select,button{font:inherit;color:#e6eef6;background:#152839;border:1px solid #39536a;border-radius:6px;padding:8px}input{width:110px}button{cursor:pointer}button:hover{background:#26435a}button.active{border-color:#70e8c2;color:#70e8c2}.nav{display:flex;gap:6px;margin-left:auto}.chartbox{background:#101e2b;border:1px solid #294053;border-radius:12px;padding:16px}.charthead{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}canvas{display:block;width:100%;touch-action:pan-y}.foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:12px;color:#9cafbf;margin-top:12px}.detail{font-size:13px;line-height:1.8;margin-top:18px;overflow-wrap:anywhere}#error{color:#ffbd96;margin-top:10px}#tooltip{position:fixed;display:none;pointer-events:none;background:#20394b;border:1px solid #739bb6;border-radius:6px;padding:10px;font-size:12px;white-space:pre-line;z-index:2}a{color:#70e8c2}@media(max-width:1000px){main{padding:14px}.cards{grid-template-columns:1fr 1fr}.primary .number{font-size:38px}.number{font-size:28px}header{align-items:start}.nav{margin-left:0}.chartbox{padding:8px}}
+</style>
+</head>
+<body><main>
+<header><div><div class="eyebrow">Live instrument</div><h1>Anemometer helicorder</h1></div><div id="status" class="status warn" role="status">Connecting…</div></header>
+<section class="cards" aria-label="Latest measurements">
+<div class="card primary"><div class="muted" id="speedTitle">Wind speed</div><div class="number"><span id="hz">—</span> <small id="speedUnit">kn</small></div><div class="caption" id="freshness">Waiting for a completed revolution</div></div>
+<div class="card"><div class="muted">Rotation speed</div><div class="number"><span id="rpm">—</span> <small>RPM</small></div><div class="caption">60 × revolution frequency</div></div>
+<div class="card"><div class="muted">Full revolution</div><div class="number"><span id="period">—</span> <small>s</small></div><div class="caption" id="pair">A — · B —</div></div>
+<div class="card"><div class="muted">Spacing imbalance</div><div class="number" id="imbalance">—</div><div class="caption">100 × (A − B) / (A + B)</div></div>
+</section>
+<div class="controls">
+<label>Seconds per strip (10–3600)<input id="duration" type="number" min="10" max="3600" step="1" value="600"></label>
+<label>Presets<select id="preset"><option value="10">10 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="300">5 minutes</option><option value="600" selected>10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="custom">Custom</option></select></label>
+<label>Strips per page<select id="rows"><option>4</option><option selected>6</option><option>8</option><option>12</option></select></label>
+<label>Strip height, px<input id="stripHeight" type="number" min="100" max="400" step="10" value="140"></label>
+<label>Display units<select id="units"><option value="knots" selected>Knots</option><option value="mph">mph</option><option value="ms">m/s</option><option value="hz">Hz</option><option value="rpm">RPM</option></select></label>
+<label><span id="yLabel">Y maximum, kn</span><input id="ymax" type="number" min="0.000001" step="any" placeholder="Auto" aria-label="Y maximum in selected units; blank for auto"></label>
+<div class="nav"><button id="older" title="Previous page">← Older</button><button id="newer" title="Next page">Newer →</button><button id="live" class="active">● Live</button></div>
+</div>
+<details style="margin-bottom:16px"><summary>Wind calibration · Hz → knots</summary><div class="controls">
+<label>Gain, knots per Hz<input id="gain" type="number" min="0.000001" max="1000000" step="any" value="1" required></label>
+<label>Offset, knots<input id="calOffset" type="number" min="-1000000" max="1000000" step="any" value="0" required></label>
+<button id="applyCalibration">Apply calibration</button></div><div class="caption">knots = max(0, gain × revolution Hz + offset). Enter coefficients from your anemometer calibration. Applies to live and historical displays; stored raw Hz is unchanged. Settings are saved in this browser.</div></details>
+<div id="calibrationNote" class="warn" role="status" style="margin-bottom:12px">UNCALIBRATED: provisional 1 knot/Hz. Set your calibration before interpreting wind speed.</div>
+<section class="chartbox"><div class="charthead"><h2 id="chartTitle">Wind speed · kn</h2><span id="range" class="muted"></span></div><canvas id="chart" role="img" aria-label="Live frequency history in horizontal strips, newest at top"></canvas><div class="foot"><span id="scale">Each strip uses the same selected-unit scale</span><span>Local time · Newest at top · Hollow dots, dashed = deduced calm (no closure for over 20 s) · Strip average = time-weighted (revolutions ÷ time, calm = 0); gaps excluded</span></div></section>
+<section class="chartbox" style="margin-top:20px" aria-label="Rain gauge">
+<div class="charthead"><h2>Rain · <span id="rainDayText">today</span></h2><div class="nav"><button id="rainOlder" title="Previous day">← Day</button><button id="rainNewer" title="Next day">Day →</button><button id="rainToday" class="active">Today</button></div></div>
+<div class="cards" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:0 0 14px">
+<div class="card"><div class="muted">Rain, midnight to midnight</div><div class="number"><span id="rainTotal">—</span> <small class="rainUnit">mm</small></div><div class="caption" id="rainTips">—</div></div>
+<div class="card"><div class="muted">Rain rate</div><div class="number"><span id="rainRate">—</span> <small class="rainUnit2">mm/h</small></div><div class="caption" id="rainRateNote">calibration ÷ time between the last two tips</div></div>
+<div class="card"><div class="muted">Last tip</div><div class="number" style="font-size:24px" id="rainLast">—</div><div class="caption" id="rainGauge">—</div></div>
+</div>
+<canvas id="rainChart" role="img" aria-label="Cumulative rain since local midnight with hourly totals"></canvas>
+<div class="foot"><span id="rainScale"></span><span>Line = cumulative since local midnight · Bars = rain in each hour (= mm/h average) · Lost packets are recovered from the cumulative count</span></div>
+<details style="margin-top:12px"><summary>Rain calibration · per tip</summary><div class="controls">
+<label>Rain per tip, mm<input id="mmPerTip" type="number" min="0.000001" max="1000" step="any" value="0.369" required></label>
+<label>Rain units<select id="rainUnits"><option value="mm" selected>mm</option><option value="in">inches</option></select></label>
+<button id="applyRain">Apply rain calibration</button></div><div class="caption">Each debounced D10 closure (about 100 ms per tip) is one tip; the reopening is not counted. Applies to live and historical totals; stored tip counts are unchanged. Saved in this browser.</div></details>
+<div id="rainNote" class="caption" role="status" style="margin-top:8px"></div>
+</section>
+<div id="error" role="alert"></div>
+<div class="detail muted" id="details">Waiting for receiver…</div>
+<p class="caption">Rain: each tip is timed by the sensor and sent immediately; totals follow your browser's local midnight. If several tips arrive in one packet after radio loss, they are all credited at the time of the latest one.</p>
+<p class="caption">“Instantaneous” means the latest completed full-revolution measurement, not an average of equal half-turns. Updates are radio-limited to about once per second. Idle heartbeat: 60 s. Gaps are not zero wind. History retained for 7 days from server startup onward; only transmitted measurements are available. Times are estimated from reception time minus sensor-reported measurement age.</p>
+</main><div id="tooltip"></div>
+<script src="/math.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), canvas=$('chart'), ctx=canvas.getContext('2d');
+let duration=600, rows=6, stripHeight=140, units='knots', gain=1, calOffset=0, calibrated=false;
+let points=[], cursor=0, state=null, live=true, fixedEnd=0, offset=0, loaded=false, generation=0, geometry=null;
+const valueOf=hz=>WindMath.convert(hz,units,gain,calOffset);
+const CALM_S=20; // no reed closure for this long = deduced calm, drawn as 0 (display only)
+const itemValue=it=>it.calm?0:valueOf(it.hz);
+const durText=s=>s<60?`${Math.round(s)} s`:s<3600?`${Math.floor(s/60)} m ${Math.round(s%60)} s`:`${Math.floor(s/3600)} h ${Math.round(s%3600/60)} m`;
+const unitLabel=()=>WindMath.labels[units];
+const compact=v=>Number(v.toPrecision(4)).toString();
+function saveSettings(){try{localStorage.setItem('windSettings',JSON.stringify({duration,rows,stripHeight,units,gain,calOffset,calibrated,ymax:$('ymax').value}));}catch(e){}}
+function displayLabels(){
+ const wind=!['hz','rpm'].includes(units);
+ $('speedUnit').textContent=unitLabel();$('speedTitle').textContent=wind?'Wind speed':'Rotation speed';
+ $('chartTitle').textContent=`${wind?'Wind':'Rotation'} speed · ${unitLabel()}`;
+ $('yLabel').textContent=`Y maximum, ${unitLabel()}`;
+ canvas.setAttribute('aria-label',`Live ${unitLabel()} history with min, average and max per strip, newest at top`);
+ $('calibrationNote').className=calibrated?'caption':'warn';
+ $('calibrationNote').textContent=calibrated?`Calibration: knots = max(0, ${gain} × Hz ${calOffset<0?'−':'+'} ${Math.abs(calOffset)}). ${wind?'Applied to the display.':'Not used for Hz/RPM.'}`:`UNCALIBRATED: provisional 1 knot/Hz. ${wind?'Set your calibration before interpreting wind speed.':'Hz/RPM are independent of wind calibration.'}`;
+}
+const clock=()=>Date.now()/1000+offset;
+const endTime=()=>live ? (Math.floor(clock()/duration)+1)*duration : fixedEnd;
+const timeText=t=>new Date(t*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+const dateText=t=>new Date(t*1000).toLocaleString();
+const fmt=(v,n=3)=>v==null?'—':Number(v).toFixed(n);
+function settings(){
+ const d=Number($('duration').value);
+ if(!Number.isInteger(d)||d<10||d>3600){$('duration').reportValidity();return false;}
+ duration=d;rows=Number($('rows').value);
+ $('preset').value=[10,30,60,300,600,1800,3600].includes(d)?String(d):'custom';
+ saveSettings();
+ return true;
+}
+async function get(url){const r=await fetch(url,{signal:AbortSignal.timeout(8000)});if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}
+function updateState(data){state=data;offset=data.now-Date.now()/1000;cursor=data.cursor;paintMetrics();}
+async function load(){
+ const gen=++generation;loaded=false;
+ try{const end=endTime(), data=await get(`/api/history?start=${end-rows*duration}&end=${end}`);
+  if(gen!==generation)return;points=data.points;updateState(data);loaded=true;$('error').textContent='';draw();
+ }catch(e){if(gen===generation){$('error').textContent=`Cannot load history: ${e.message}`;loaded=true;}}
+}
+function paintMetrics(){
+ if(!state)return;
+ const p=state.latest, now=clock(), radioAge=p?Math.max(0,now-p.received):null;
+ const age=p&&p.measured_at!=null?Math.max(0,now-p.measured_at):null;
+ const stale=age==null||age>Math.max(20,2*(p?.period_s||0));
+ let text='Receiving',good=true;
+ if(!state.connected){text='Receiver disconnected';good=false;}
+ else if(state.error){text=state.error;good=false;}
+ else if(!p){text='Waiting for sensor';good=false;}
+ else if(radioAge>75){text='Radio link stale';good=false;}
+ else if(p.hz==null){text='Waiting for full revolution';good=false;}
+ else if(stale){text='Stopped / slow · last reading';good=false;}
+ $('status').textContent=text;$('status').className='status '+(good?'ok':'warn');
+ $('hz').textContent=fmt(valueOf(p?.hz),units==='hz'?4:2);$('rpm').textContent=fmt(p?.hz==null?null:60*p.hz,2);
+ $('period').textContent=p?.hz==null?'—':fmt(p.period_s,4);
+ $('imbalance').textContent=p?.imbalance==null?'—':`${p.imbalance>=0?'+':''}${fmt(p.imbalance,2)}%`;
+ $('pair').textContent=`A ${p?.hz==null?'—':fmt(p.a_s,4)+' s'} · B ${p?.hz==null?'—':fmt(p.b_s,4)+' s'}`;
+ $('hz').style.opacity=good?'1':'.5';
+ $('freshness').textContent=age==null?'First accepted edge is reference; third completes a revolution':`${good?'Latest':'Last known'} measurement · ${age.toFixed(1)} s old`;
+ $('details').textContent=p?`Session ${p.session} · Sequence ${p.seq} · Completed revolutions ${p.revolutions} · Electrical pulses ${p.count}${p.clock?' · ⚠ Sensor on internal clock fallback (32 kHz crystal stopped): timing less accurate':''}${['W3','W4','W5'].includes(p.version)?` · Reed D5 ${p.pin?'open':'closed'}${p.pin_age_s==null?'':` (unchanged ${p.pin_age_s.toFixed(0)} s at last packet)`} · Raw D5 edges ${p.raw_edges}`:''} · RSSI ${p.rssi} dBm · SNR ${p.snr} dB · Last packet ${radioAge.toFixed(1)} s ago · Malformed frames ${state.malformed}`:`${state.error||'Receiver open; no W2–W4 packets yet.'} Malformed frames: ${state.malformed}`;
+}
+function draw(){
+ const width=canvas.clientWidth, left=94, right=16, top=22, stripH=stripHeight, plotH=stripH-56, height=top+rows*stripH+12;
+ const ratio=window.devicePixelRatio||1;canvas.style.height=height+'px';canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);
+ const end=endTime(), start=end-duration*rows, plotWidth=width-left-right;
+ const visible=points.filter(p=>p.t>=start&&p.t<end).sort((a,b)=>a.t-b.t);
+ let maximum=0;for(const p of visible)maximum=Math.max(maximum,valueOf(p.hz));
+ // All loaded points: a calm-spanning revolution that completes after this page still draws its calm.
+ const series=WindMath.calmSeries(points.slice().sort((a,b)=>a.t-b.t),CALM_S), items=series.items, spans=series.spans;
+ const lp=state?.latest, now0=clock();
+ if(live&&lp&&state.connected&&lp.pulse_at!=null&&now0-lp.received<=75&&now0-lp.pulse_at>CALM_S){
+  // Live: no closure reported for CALM_S; provisional until the next revolution replaces it.
+  items.push({t:lp.pulse_at+CALM_S,hz:0,calm:true,provisional:true,stream:lp.stream,period:CALM_S},
+             {t:now0,hz:0,calm:true,provisional:true,stream:lp.stream,period:Math.max(CALM_S,now0-lp.pulse_at-CALM_S)});
+  spans.push({start:lp.pulse_at+CALM_S,end:now0,hz:0,calm:true});
+ }
+ const fixed=Number($('ymax').value), scale=WindMath.niceScale(fixed>0?fixed:maximum*1.1,Math.max(2,Math.floor(plotH/28)),fixed>0), ymax=scale.max;
+ geometry={left,right,top,stripH,start,end,plotWidth,width,ymax,items};
+ ctx.font='11px system-ui';ctx.textBaseline='middle';
+ const ticks=width<550?4:5;
+ for(let row=0;row<rows;row++){
+  const y=top+row*stripH, rowStart=end-(row+1)*duration, base=y+12+plotH;
+  ctx.fillStyle=row%2?'#132432':'#101e2b';ctx.fillRect(0,y,width,stripH);
+  ctx.textAlign='left';ctx.fillStyle='#b8cbd8';ctx.fillText(timeText(rowStart),2,y+14);
+  ctx.fillStyle='#7b95a9';ctx.fillText(new Date(rowStart*1000).toLocaleDateString([],{month:'short',day:'numeric'}),2,y+30);
+  for(const tick of scale.ticks){
+   const yy=base-tick/ymax*plotH;ctx.strokeStyle='#294052';ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(width-right,yy);ctx.stroke();
+   ctx.fillStyle='#839caf';ctx.textAlign='right';ctx.fillText(WindMath.tickLabel(tick,scale.step),left-5,yy,44);
+  }
+  for(let j=0;j<=ticks;j++){
+   const x=left+plotWidth*j/ticks;ctx.strokeStyle='#223746';ctx.beginPath();ctx.moveTo(x,y+12);ctx.lineTo(x,base);ctx.stroke();
+   ctx.fillStyle='#839caf';ctx.textAlign=j===0?'left':j===ticks?'right':'center';
+   const elapsed=duration*j/ticks, value=duration<120?elapsed:elapsed/60;
+   ctx.fillText(`${value.toFixed(Number.isInteger(value)?0:1)}${duration<120?'s':'m'}`,x,base+16);
+  }
+  const rowPoints=[];let before=null,after=null;
+  for(const p of items){if(p.t<rowStart)before=p;else if(p.t<rowStart+duration)rowPoints.push(p);else{after=p;break;}}
+  if(before)rowPoints.unshift(before);if(after)rowPoints.push(after);
+  const inRow=rowPoints.filter(p=>p.t>=rowStart&&p.t<rowStart+duration);
+  const real=WindMath.stats(inRow.filter(p=>!p.calm).map(p=>valueOf(p.hz)));
+  const tw=WindMath.timeAverage(spans,rowStart,rowStart+duration,valueOf);
+  ctx.fillStyle='#b4c9d8';ctx.textAlign='right';ctx.font='10px system-ui';
+  const calmNote=tw&&tw.calm>=1?` · calm ${durText(tw.calm)}`:'';
+  const summaryText=tw?`min ${compact(tw.calm>0?0:real?real.min:0)} · avg ${compact(tw.avg)} · max ${compact(real?real.max:0)} ${unitLabel()}  (n=${real?real.count:0}${calmNote})`:'min — · avg — · max —  (no measurements)';
+  ctx.fillText(summaryText,width-right,y+stripH-8,width-8);ctx.font='11px system-ui';
+  ctx.save();ctx.beginPath();ctx.rect(left,y+10,plotWidth,plotH+4);ctx.clip();
+  let prev=null;ctx.strokeStyle='#68e4b5';ctx.fillStyle='#68e4b5';ctx.lineWidth=1.6;
+  for(const p of rowPoints){
+   const x=left+(p.t-rowStart)/duration*plotWidth, yy=base-itemValue(p)/ymax*plotH;
+   if(prev&&prev.p.stream===p.stream&&p.t-prev.p.t<=Math.max(20,2*Math.max(p.period,prev.p.period))){
+    if(p.calm||prev.p.calm)ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(prev.x,prev.y);ctx.lineTo(x,yy);ctx.stroke();ctx.setLineDash([]);
+   }
+   ctx.beginPath();ctx.arc(x,yy,p.calm?2.5:2,0,2*Math.PI);
+   if(p.calm){ctx.lineWidth=1.2;ctx.stroke();ctx.lineWidth=1.6;}else ctx.fill();
+   prev={p,x,y:yy};
+  }
+  ctx.restore();
+  const now=clock();if(live&&now>=rowStart&&now<rowStart+duration){const x=left+(now-rowStart)/duration*plotWidth;ctx.strokeStyle='#e4b26c';ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(x,y+8);ctx.lineTo(x,base);ctx.stroke();ctx.setLineDash([]);}
+ }
+ $('range').textContent=`${dateText(start)} — ${dateText(end)}${live?' · LIVE':' · HISTORY'}`;
+ $('scale').textContent=`0–${WindMath.tickLabel(ymax,scale.step)} ${unitLabel()} on every strip · ${visible.length} measurements`;
+ $('live').className=live?'active':'';
+}
+// ---- Rain ----
+const rainCanvas=$('rainChart'), rctx=rainCanvas.getContext('2d');
+// Initial calibration: 2 ml per tip over a 49.5 × 109.5 mm funnel opening = 0.3690 mm/tip.
+const RAIN_DEFAULT=Number((2000/(49.5*109.5)).toPrecision(4));
+let mmPerTip=RAIN_DEFAULT, rainUnits='mm', rainCalibrated=true, rainDay=null, rainRows=[], rainKey=null, rainFetched=0, rainGen=0;
+const midnight=t=>{const d=new Date(t*1000);d.setHours(0,0,0,0);return d.getTime()/1000;};
+const nextMidnight=t=>{const d=new Date(t*1000);d.setHours(24,0,0,0);return d.getTime()/1000;};
+const rainVal=mm=>rainUnits==='in'?mm/25.4:mm;
+const rainFmt=mm=>mm==null?'—':rainVal(mm).toFixed(rainUnits==='in'?3:1);
+function saveRain(){try{localStorage.setItem('rainSettings',JSON.stringify({mmPerTip,rainUnits,rainCalibrated}));}catch(e){}}
+function rainLabels(){
+ document.querySelector('.rainUnit').textContent=rainUnits;document.querySelector('.rainUnit2').textContent=rainUnits+'/h';
+ $('rainNote').className=rainCalibrated?'caption':'warn';
+ $('rainNote').textContent=rainCalibrated?mmPerTip===RAIN_DEFAULT?`Rain calibration: ${mmPerTip} mm per tip (initial: 2 ml per tip ÷ 49.5 × 109.5 mm funnel).`:`Rain calibration: ${mmPerTip} mm per tip (set in this browser).`:`UNCALIBRATED: provisional ${mmPerTip} mm per tip. Set the gauge's mm per tip.`;
+}
+async function loadRain(){
+ const gen=++rainGen, today=midnight(clock()), day=rainDay??today;
+ try{const data=await get(`/api/rain?start=${day}&end=${nextMidnight(day)}`);if(gen!==rainGen)return;
+  rainRows=data.tips;rainFetched=Date.now();drawRain();}catch(e){if(gen===rainGen)$('rainScale').textContent=`Cannot load rain: ${e.message}`;}
+}
+function paintRain(){
+ const p=state?.latest, now=clock();
+ if(!p||p.rain_tips==null){$('rainRate').textContent='—';$('rainLast').textContent='—';
+  $('rainGauge').textContent='No rain data yet (needs sensor firmware W5)';$('rainRateNote').textContent='';return;}
+ // Rate = calibration / max(last tip interval, time since last tip): decays during dry spells.
+ const age=p.rain_at==null?null:Math.max(0,now-p.rain_at);
+ let rate=null,note='needs two tips since sensor start';
+ if(age!=null&&age>3600){rate=0;note='no tip for over 1 h';}
+ else if(p.rain_interval_s){rate=mmPerTip*3600/Math.max(p.rain_interval_s,age);note=age>p.rain_interval_s?'decaying: no tip since; upper bound':'from the last two tips';}
+ $('rainRate').textContent=rate==null?'—':rainVal(rate).toFixed(rainUnits==='in'?3:1);$('rainRateNote').textContent=note;
+ $('rainLast').textContent=p.rain_at==null?'none since start':`${timeText(p.rain_at)} · ${age<120?age.toFixed(0)+' s':age<7200?(age/60).toFixed(0)+' min':(age/3600).toFixed(1)+' h'} ago`;
+ $('rainGauge').textContent=`Gauge D10 ${p.rain_pin?'open':'closed'} · ${p.rain_tips} tips since sensor start · raw D10 edges ${p.rain_raw_edges}`;
+}
+function drawRain(){
+ const day=rainDay??midnight(clock()), end=nextMidnight(day), span=end-day, today=rainDay==null;
+ const width=rainCanvas.clientWidth, height=200, left=60, right=16, top=14, plotH=height-top-30, plotW=width-left-right;
+ const ratio=window.devicePixelRatio||1;rainCanvas.style.height=height+'px';rainCanvas.width=Math.round(width*ratio);rainCanvas.height=Math.round(height*ratio);rctx.setTransform(ratio,0,0,ratio,0,0);
+ const rows=rainRows.filter(r=>r.t>=day&&r.t<end), hours=new Array(Math.ceil(span/3600)).fill(0);
+ let tips=0;for(const r of rows){tips+=r.added;hours[Math.min(hours.length-1,Math.floor((r.t-day)/3600))]+=r.added;}
+ const total=tips*mmPerTip, scale=WindMath.niceScale(Math.max(rainVal(total),rainVal(mmPerTip))*1.1,4,false), ymax=scale.max;
+ const X=t=>left+(t-day)/span*plotW, Y=mm=>top+plotH-rainVal(mm)/ymax*plotH;
+ rctx.fillStyle='#101e2b';rctx.fillRect(0,0,width,height);rctx.font='11px system-ui';rctx.textBaseline='middle';
+ for(const tick of scale.ticks){const y=Y(rainUnits==='in'?tick*25.4:tick);rctx.strokeStyle='#294052';rctx.beginPath();rctx.moveTo(left,y);rctx.lineTo(width-right,y);rctx.stroke();
+  rctx.fillStyle='#839caf';rctx.textAlign='right';rctx.fillText(WindMath.tickLabel(tick,scale.step),left-5,y);}
+ const step=width<550?6:3;
+ for(let h=0;h<=24;h+=step){const t=Math.min(end,day+h*3600),x=X(t);rctx.strokeStyle='#223746';rctx.beginPath();rctx.moveTo(x,top);rctx.lineTo(x,top+plotH);rctx.stroke();
+  rctx.fillStyle='#839caf';rctx.textAlign=h===0?'left':h===24?'right':'center';rctx.fillText(h===24?'24:00':new Date(t*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false}),x,top+plotH+16);}
+ rctx.fillStyle='rgba(120,169,198,.35)';
+ hours.forEach((n,h)=>{if(!n)return;const x0=X(day+h*3600),x1=X(Math.min(end,day+(h+1)*3600)),y=Y(n*mmPerTip);rctx.fillRect(x0+1,y,Math.max(1,x1-x0-2),top+plotH-y);});
+ const stop=today?Math.min(end,clock()):end;let cum=0,x=X(day),y=Y(0);
+ rctx.strokeStyle='#6cb8ff';rctx.lineWidth=2;rctx.beginPath();rctx.moveTo(x,y);
+ for(const r of rows){const nx=X(r.t);rctx.lineTo(nx,y);cum+=r.added*mmPerTip;y=Y(cum);rctx.lineTo(nx,y);}
+ rctx.lineTo(X(stop),y);rctx.stroke();rctx.lineWidth=1;
+ if(today){const nx=X(clock());rctx.strokeStyle='#e4b26c';rctx.setLineDash([3,4]);rctx.beginPath();rctx.moveTo(nx,top);rctx.lineTo(nx,top+plotH);rctx.stroke();rctx.setLineDash([]);}
+ $('rainTotal').textContent=rainFmt(total);
+ $('rainTips').textContent=`${tips} tip${tips===1?'':'s'} × ${mmPerTip} mm${today?' · so far today':''}`;
+ $('rainDayText').textContent=today?'today':new Date(day*1000).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric',year:'numeric'});
+ $('rainScale').textContent=`${new Date(day*1000).toLocaleDateString()} 00:00 — 24:00 local · max hour ${rainFmt(Math.max(0,...hours)*mmPerTip)} ${rainUnits}`;
+ $('rainToday').className=today?'active':'';
+}
+function rainTick(){
+ if(!state)return;paintRain();
+ const key=`${state.latest?.rain_tips}|${midnight(clock())}`;
+ if(key!==rainKey||Date.now()-rainFetched>60000){rainKey=key;loadRain();}else drawRain();
+}
+$('rainOlder').onclick=()=>{rainDay=midnight((rainDay??midnight(clock()))-43200);loadRain();};
+$('rainNewer').onclick=()=>{const next=nextMidnight((rainDay??midnight(clock()))+43200);rainDay=next>=midnight(clock())?null:midnight(next+3600);loadRain();};
+$('rainToday').onclick=()=>{rainDay=null;loadRain();};
+$('applyRain').onclick=()=>{if(!$('mmPerTip').checkValidity()){$('mmPerTip').reportValidity();return;}
+ mmPerTip=Number($('mmPerTip').value);rainUnits=$('rainUnits').value;rainCalibrated=true;saveRain();rainLabels();paintRain();drawRain();};
+$('rainUnits').addEventListener('change',()=>{rainUnits=$('rainUnits').value;saveRain();rainLabels();paintRain();drawRain();});
+try{const r=JSON.parse(localStorage.getItem('rainSettings'));
+ if(r){if(r.rainCalibrated===true&&Number.isFinite(r.mmPerTip)&&r.mmPerTip>0&&r.mmPerTip<=1000){mmPerTip=r.mmPerTip;rainCalibrated=true;}
+  if(['mm','in'].includes(r.rainUnits))rainUnits=r.rainUnits;}}catch(e){}
+$('mmPerTip').value=mmPerTip;$('rainUnits').value=rainUnits;rainLabels();
+new ResizeObserver(drawRain).observe(rainCanvas.parentElement);
+async function poll(){
+ try{
+  if(loaded){const gen=generation,data=await get(`/api/live?after=${cursor}`);
+   if(gen===generation){updateState(data);rainTick();if(live){const start=endTime()-rows*duration;points=points.concat(data.points).filter(p=>p.t>=start);} $('error').textContent='';draw();}
+  }
+ }catch(e){$('error').textContent=`Server connection lost: ${e.message}. Retrying…`;$('status').textContent='Web connection lost';$('status').className='status warn';}
+ finally{setTimeout(poll,1000);}
+}
+$('duration').addEventListener('change',()=>{if(settings()){live=true;load();}});
+$('rows').addEventListener('change',()=>{if(settings()){live=true;load();}});
+$('preset').addEventListener('change',()=>{if($('preset').value!=='custom'){$('duration').value=$('preset').value;settings();live=true;load();}});
+$('ymax').addEventListener('change',()=>{if($('ymax').value&&!$('ymax').checkValidity()){$('ymax').reportValidity();return;}saveSettings();draw();});
+$('stripHeight').addEventListener('change',()=>{if(!$('stripHeight').value||!$('stripHeight').checkValidity()){$('stripHeight').reportValidity();return;}stripHeight=Number($('stripHeight').value);saveSettings();draw();});
+$('units').addEventListener('change',()=>{units=$('units').value;$('ymax').value='';saveSettings();displayLabels();paintMetrics();draw();});
+$('applyCalibration').onclick=()=>{
+ for(const id of ['gain','calOffset']){if(!$(id).checkValidity()){$(id).reportValidity();return;}}
+ gain=Number($('gain').value);calOffset=Number($('calOffset').value);calibrated=true;
+ $('ymax').value='';saveSettings();displayLabels();paintMetrics();draw();
+};
+$('older').onclick=()=>{fixedEnd=endTime()-rows*duration;live=false;load();};
+$('newer').onclick=()=>{fixedEnd=endTime()+rows*duration;live=fixedEnd>=(Math.floor(clock()/duration)+1)*duration;load();};
+$('live').onclick=()=>{live=true;load();};
+canvas.addEventListener('pointermove',e=>{
+ if(!geometry)return;const g=geometry,r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,row=Math.floor((y-g.top)/g.stripH);
+ if(row<0||row>=rows||x<g.left){$('tooltip').style.display='none';return;}
+ const rowStart=g.end-(row+1)*duration;
+ const t=rowStart+(x-g.left)/g.plotWidth*duration;
+ let best=null,dist=Infinity;for(const p of g.items){if(p.t<rowStart||p.t>=rowStart+duration)continue;const d=Math.abs(p.t-t);if(d<dist){best=p;dist=d;}}
+ if(!best||dist>duration*12/g.plotWidth){$('tooltip').style.display='none';return;}
+ $('tooltip').textContent=best.calm?`${dateText(best.t)}\nDeduced calm: 0 ${unitLabel()}\nNo reed closure for over ${CALM_S} s${best.provisional?' (provisional, live)':''}\nDisplay only; not a measurement`:`${dateText(best.t)}\n${valueOf(best.hz).toFixed(4)} ${unitLabel()}${!calibrated&&!['hz','rpm'].includes(units)?' (uncalibrated)':''} · ${best.hz.toFixed(4)} Hz\nPeriod ${best.period.toFixed(5)} s\nA ${best.a.toFixed(5)} s · B ${best.b.toFixed(5)} s\nImbalance ${best.imbalance.toFixed(2)}% · Revolution ${best.revs}`;
+ $('tooltip').style.display='block';$('tooltip').style.left=Math.max(0,Math.min(e.clientX+12,innerWidth-280))+'px';$('tooltip').style.top=Math.max(0,Math.min(e.clientY+12,innerHeight-140))+'px';
+});canvas.addEventListener('pointerleave',()=>$('tooltip').style.display='none');
+try{
+ const s=JSON.parse(localStorage.getItem('windSettings'));
+ if(s){
+  if(Number.isInteger(s.duration)&&s.duration>=10&&s.duration<=3600){duration=s.duration;$('duration').value=duration;}
+  if([4,6,8,12].includes(s.rows)){rows=s.rows;$('rows').value=rows;}
+  if(Number.isFinite(s.stripHeight)&&s.stripHeight>=100&&s.stripHeight<=400){stripHeight=s.stripHeight;$('stripHeight').value=stripHeight;}
+  if(Object.hasOwn(WindMath.labels,s.units)){units=s.units;$('units').value=units;}
+  if(s.calibrated===true&&Number.isFinite(s.gain)&&s.gain>=.000001&&s.gain<=1e6&&Number.isFinite(s.calOffset)&&Math.abs(s.calOffset)<=1e6){gain=s.gain;calOffset=s.calOffset;calibrated=true;}
+  $('gain').value=gain;$('calOffset').value=calOffset;
+  if(Number.isFinite(Number(s.ymax))&&Number(s.ymax)>0)$('ymax').value=s.ymax;
+ }
+}catch(e){}
+settings();displayLabels();
+new ResizeObserver(draw).observe(canvas.parentElement);
+load().then(poll);
+</script>
+</body></html>
