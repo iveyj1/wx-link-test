@@ -44,4 +44,16 @@ assert.equal(calmSeries([rev(100,19,19)],20).items.length,1);
 const joined=list=>list.slice(1).every((p,i)=>p.t-list[i].t<=Math.max(20,2*Math.max(p.period,list[i].period)));
 assert.ok(joined(calmSeries([rev(100,1,1),rev(500,397,1),rev(502,1,1)],20).items));
 assert.ok(joined(calmSeries([rev(100,1,1),rev(400,100,200),rev(402,1,1)],20).items));
-console.log('PASS: calibration, all units, zero clamp, sample statistics, preferred ticks and labels, deduced calm, time-weighted average');
+// Live calm certainty: after a completed revolution (odd count) wait 2T, after a middle closure T.
+const {liveCalmStart,bucketAverage}=require('./web/math.js');
+assert.equal(liveCalmStart(100,'7',130),null);      // 30 s after a completion: a middle closure may be unreported
+assert.equal(liveCalmStart(100,'7',144),120);       // > 2T + margin: certain; calm began at last closure + T
+assert.equal(liveCalmStart(100,'8',124),120);       // after a middle closure, T + margin suffices
+assert.equal(liveCalmStart(100,'8',122),null);
+assert.equal(liveCalmStart(null,'0',1000),null);
+// Bucket average equals the per-revolution time-weighted average for linear calibration.
+const bk=[{t0:0,n:4,tsum:307,csum:280}];
+near(bucketAverage(bk,0,1000).avg,timeAverage(spans,0,1000).avg);
+near(bucketAverage(bk,0,1000,hz=>2*hz+0.5).avg,timeAverage(spans,0,1000,hz=>2*hz+0.5).avg);
+assert.equal(bucketAverage(bk,10,1000),null);       // bucket starts outside the strip
+console.log('PASS: calibration, all units, zero clamp, sample statistics, preferred ticks and labels, deduced calm, time-weighted average, live calm certainty, bucket average');

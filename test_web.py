@@ -113,6 +113,22 @@ class WebTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 decode(f'+RCV=1,{len(bad)},{bad},-80,9')
 
+    def test_condensed_history(self):
+        now = 1_800_000_000.0
+        # 30 one-second revolutions in one 60 s bucket, then a 300 s calm revolution.
+        for i in range(30):
+            self.w5(i + 1, 0, received=now + i, count=2 * i + 3, uptime=100000 + i * 32768)
+        payload_rows = self.store.db.execute('SELECT COUNT(*) FROM samples').fetchone()[0]
+        self.assertEqual(payload_rows, 30)
+        self.store.db.execute('UPDATE samples SET hz = 1.0 / 300, period = 300, a = 290, b = 10 '
+                              'WHERE id = (SELECT MAX(id) FROM samples)')
+        result = self.store.condensed(now - 60, now + 60, 60, 20)
+        self.assertLessEqual(len(result['points']), 4)          # min and max per bucket
+        self.assertIn(1.0 / 300, [p['hz'] for p in result['points']])  # calm revolution kept
+        totals = [(b['n'], round(b['tsum'], 3), round(b['csum'], 3)) for b in result['buckets']]
+        self.assertEqual(sum(t[0] for t in totals), 30)
+        self.assertAlmostEqual(sum(t[2] for t in totals), 270)  # 290 - 20
+
     def test_unknown_period(self):
         payload = 'W2,abcd1234,1,0,0,0,0,0,18446744073709551615,18446744073709551615,50000'
         self.store.accept(decode(f'+RCV=1,{len(payload)},{payload},-28,13'))
@@ -135,7 +151,10 @@ class WebTests(unittest.TestCase):
                 self.assertIn('javascript', response.headers['Content-Type'])
             with urlopen(base+'/api/rain?start=0&end=86400') as response:
                 self.assertEqual(json.load(response)['tips'], [])
-            for query in ('/api/rain?start=0', '/api/rain?start=0&end=9999999', '/api/history?start=nan&end=1', '/api/history?start=0&end=50000', '/api/live?after=-1', '/../../etc/passwd'):
+            with urlopen(base+'/api/history?start=0&end=86400&bucket=120&calm=20') as response:
+                self.assertEqual(json.load(response)['buckets'], [])
+            for query in ('/api/rain?start=0', '/api/rain?start=0&end=9999999', '/api/history?start=nan&end=1',
+                          '/api/history?start=0&end=86400&bucket=0.5', '/api/history?start=0&end=86400', '/api/history?start=0&end=50000', '/api/live?after=-1', '/../../etc/passwd'):
                 with self.assertRaises(HTTPError):
                     urlopen(base+query)
         finally:

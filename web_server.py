@@ -133,6 +133,27 @@ class Store:
         return dict(connected=self.connected, error=self.error, latest=self.latest,
                     last_serial=self.last_serial, malformed=self.malformed, now=time.time())
 
+    def condensed(self, start, end, bucket, calm):
+        """Long ranges: per time bucket, the slowest and fastest real samples (so extremes and
+        calm-spanning revolutions survive) plus totals for a time-weighted strip average:
+        n revolutions, tsum = their summed period, csum = the part of it deduced calm
+        (each half longer than `calm` seconds contributes half - calm)."""
+        with self.lock:
+            cursor = self.db.execute('SELECT COALESCE(MAX(id),0) FROM samples').fetchone()[0]
+            base = 'SELECT *, CAST((t - :s) / :b AS INTEGER) AS bk FROM samples WHERE t >= :s AND t < :e'
+            args = dict(s=start, e=end, b=bucket, c=calm)
+            rows = self.db.execute(
+                f'SELECT id,t,stream,hz,period,a,b,imbalance,revs,pulses FROM ('
+                f'SELECT *, ROW_NUMBER() OVER (PARTITION BY bk ORDER BY hz) AS lo, '
+                f'ROW_NUMBER() OVER (PARTITION BY bk ORDER BY hz DESC) AS hi FROM ({base})) '
+                f'WHERE lo = 1 OR hi = 1 ORDER BY t', args).fetchall()
+            buckets = self.db.execute(
+                f'SELECT :s + bk * :b AS t0, COUNT(*) AS n, SUM(period) AS tsum, '
+                f'SUM(MAX(a - :c, 0) + MAX(b - :c, 0)) AS csum FROM ({base}) GROUP BY bk ORDER BY bk',
+                args).fetchall()
+            return dict(self.status(), cursor=cursor, bucket=bucket, points=[dict(r) for r in rows],
+                        buckets=[dict(r) for r in buckets])
+
     def query(self, after=None, start=None, end=None):
         with self.lock:
             cursor = self.db.execute('SELECT COALESCE(MAX(id),0) FROM samples').fetchone()[0]
@@ -213,9 +234,20 @@ def handler_for(store):
                     else:
                         end = float(params.get('end', [str(time.time()+3600)])[0])
                         start = float(params.get('start', [str(end-3600)])[0])
-                        if not all(map(math.isfinite, (start, end))) or not 0 < end-start <= 12*3600:
-                            raise ValueError('history range must be positive and at most 12 hours')
-                        data = store.query(start=start, end=end)
+                        if not all(map(math.isfinite, (start, end))) or end <= start:
+                            raise ValueError('history range must be positive')
+                        if 'bucket' in params:
+                            # Condensed: up to 12 strips of 24 h, at most 20000 buckets.
+                            bucket = float(params['bucket'][0])
+                            calm = float(params.get('calm', ['20'])[0])
+                            if not (math.isfinite(bucket) and math.isfinite(calm) and bucket >= 1 and calm > 0
+                                    and end - start <= 12 * 86400 and (end - start) / bucket <= 20000):
+                                raise ValueError('invalid condensed history request')
+                            data = store.condensed(start, end, bucket, calm)
+                        elif end - start > 12 * 3600:
+                            raise ValueError('full-resolution history range is at most 12 hours')
+                        else:
+                            data = store.query(start=start, end=end)
                     body = json.dumps(data, allow_nan=False).encode()
                     kind = 'application/json'
                 else:

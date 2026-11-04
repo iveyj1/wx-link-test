@@ -5,7 +5,7 @@
 <title>Wind and Rain</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='none' stroke='%2370e8c2' stroke-width='3' d='M1 20L8 20L12 7L18 26L23 12L31 12'/%3E%3C/svg%3E">
 <style>
-:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0c1520;color:#e6eef6}*{box-sizing:border-box}body{margin:0}main{max-width:1600px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:24px;margin:0}h2{font-size:17px;margin:0}.eyebrow{font-size:12px;letter-spacing:2px;color:#78a9c6;text-transform:uppercase}.muted,small{color:#9cafbf}.status{padding:8px 14px;border:1px solid #354b60;border-radius:20px;font-size:13px}.ok{color:#71e8b0}.warn{color:#ffc77c}.cards{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:14px;margin:24px 0}.card{background:#142230;border:1px solid #253b4e;border-radius:12px;padding:18px;min-width:0}.number{font-size:34px;font-variant-numeric:tabular-nums;margin:8px 0}.primary .number{font-size:48px;color:#70e8c2}.number small{font-size:16px}.caption{font-size:12px;color:#9cafbf;overflow-wrap:anywhere}.controls{display:flex;flex-wrap:wrap;align-items:end;gap:14px;padding:18px 0}label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#9cafbf}input,select,button{font:inherit;color:#e6eef6;background:#152839;border:1px solid #39536a;border-radius:6px;padding:8px}input{width:110px}button{cursor:pointer}button:hover{background:#26435a}button.active{border-color:#70e8c2;color:#70e8c2}.nav{display:flex;gap:6px;margin-left:auto}.chartbox{background:#101e2b;border:1px solid #294053;border-radius:12px;padding:16px}.charthead{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}canvas{display:block;width:100%;touch-action:pan-y}.foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:12px;color:#9cafbf;margin-top:12px}.detail{font-size:13px;line-height:1.8;margin-top:18px;overflow-wrap:anywhere}#error{color:#ffbd96;margin-top:10px}#tooltip{position:fixed;display:none;pointer-events:none;background:#20394b;border:1px solid #739bb6;border-radius:6px;padding:10px;font-size:12px;white-space:pre-line;z-index:2}a{color:#70e8c2}@media(max-width:1000px){main{padding:14px}.cards{grid-template-columns:1fr 1fr}.primary .number{font-size:38px}.number{font-size:28px}header{align-items:start}.nav{margin-left:0}.chartbox{padding:8px}}
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0c1520;color:#e6eef6}*{box-sizing:border-box}body{margin:0}main{max-width:1600px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:24px;margin:0}h2{font-size:17px;margin:0}.eyebrow{font-size:12px;letter-spacing:2px;color:#78a9c6;text-transform:uppercase}.muted,small{color:#9cafbf}.status{padding:8px 14px;border:1px solid #354b60;border-radius:20px;font-size:13px}.ok{color:#71e8b0}.warn{color:#ffc77c}.cards{display:grid;grid-template-columns:2fr 1fr 1fr;gap:14px;margin:24px 0}.card{background:#142230;border:1px solid #253b4e;border-radius:12px;padding:18px;min-width:0}.number{font-size:34px;font-variant-numeric:tabular-nums;margin:8px 0}.primary .number{font-size:48px;color:#70e8c2}.number small{font-size:16px}.caption{font-size:12px;color:#9cafbf;overflow-wrap:anywhere}.controls{display:flex;flex-wrap:wrap;align-items:end;gap:14px;padding:18px 0}label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#9cafbf}input,select,button{font:inherit;color:#e6eef6;background:#152839;border:1px solid #39536a;border-radius:6px;padding:8px}input{width:110px}button{cursor:pointer}button:hover{background:#26435a}button.active{border-color:#70e8c2;color:#70e8c2}.nav{display:flex;gap:6px;margin-left:auto}.chartbox{background:#101e2b;border:1px solid #294053;border-radius:12px;padding:16px}.charthead{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}canvas{display:block;width:100%;touch-action:pan-y}.foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:12px;color:#9cafbf;margin-top:12px}.detail{font-size:13px;line-height:1.8;margin-top:18px;overflow-wrap:anywhere}#error{color:#ffbd96;margin-top:10px}#tooltip{position:fixed;display:none;pointer-events:none;background:#20394b;border:1px solid #739bb6;border-radius:6px;padding:10px;font-size:12px;white-space:pre-line;z-index:2}a{color:#70e8c2}@media(max-width:1000px){main{padding:14px}.cards{grid-template-columns:1fr 1fr}.primary .number{font-size:38px}.number{font-size:28px}header{align-items:start}.nav{margin-left:0}.chartbox{padding:8px}}
 </style>
 </head>
 <body><main>
@@ -14,11 +14,10 @@
 <div class="card primary"><div class="muted" id="speedTitle">Wind speed</div><div class="number"><span id="hz">—</span> <small id="speedUnit">kn</small></div><div class="caption" id="freshness">Waiting for a completed revolution</div></div>
 <div class="card"><div class="muted">Rotation speed</div><div class="number"><span id="rpm">—</span> <small>RPM</small></div><div class="caption">60 × revolution frequency</div></div>
 <div class="card"><div class="muted">Full revolution</div><div class="number"><span id="period">—</span> <small>s</small></div><div class="caption" id="pair">A — · B —</div></div>
-<div class="card"><div class="muted">Spacing imbalance</div><div class="number" id="imbalance">—</div><div class="caption">100 × (A − B) / (A + B)</div></div>
 </section>
 <div class="controls">
-<label>Seconds per strip (10–3600)<input id="duration" type="number" min="10" max="3600" step="1" value="600"></label>
-<label>Presets<select id="preset"><option value="10">10 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="300">5 minutes</option><option value="600" selected>10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="custom">Custom</option></select></label>
+<label>Seconds per strip (10–86400)<input id="duration" type="number" min="10" max="86400" step="1" value="600"></label>
+<label>Presets<select id="preset"><option value="10">10 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="300">5 minutes</option><option value="600" selected>10 minutes</option><option value="1800">30 minutes</option><option value="3600">1 hour</option><option value="7200">2 hours</option><option value="10800">3 hours</option><option value="21600">6 hours</option><option value="43200">12 hours</option><option value="86400">24 hours</option><option value="custom">Custom</option></select></label>
 <label>Strips per page<select id="rows"><option>4</option><option selected>6</option><option>8</option><option>12</option></select></label>
 <label>Strip height, px<input id="stripHeight" type="number" min="100" max="400" step="10" value="140"></label>
 <label>Display units<select id="units"><option value="knots" selected>Knots</option><option value="mph">mph</option><option value="ms">m/s</option><option value="hz">Hz</option><option value="rpm">RPM</option></select></label>
@@ -30,7 +29,7 @@
 <label>Offset, knots<input id="calOffset" type="number" min="-1000000" max="1000000" step="any" value="0" required></label>
 <button id="applyCalibration">Apply calibration</button></div><div class="caption">knots = max(0, gain × revolution Hz + offset). Enter coefficients from your anemometer calibration. Applies to live and historical displays; stored raw Hz is unchanged. Settings are saved in this browser.</div></details>
 <div id="calibrationNote" class="warn" role="status" style="margin-bottom:12px">UNCALIBRATED: provisional 1 knot/Hz. Set your calibration before interpreting wind speed.</div>
-<section class="chartbox"><div class="charthead"><h2 id="chartTitle">Wind speed · kn</h2><span id="range" class="muted"></span></div><canvas id="chart" role="img" aria-label="Live frequency history in horizontal strips, newest at top"></canvas><div class="foot"><span id="scale">Each strip uses the same selected-unit scale</span><span>Local time · Newest at top · Hollow dots, dashed = deduced calm (no closure for over 20 s) · Strip average = time-weighted (revolutions ÷ time, calm = 0); gaps excluded</span></div></section>
+<section class="chartbox"><div class="charthead"><h2 id="chartTitle">Wind speed · kn</h2><span id="range" class="muted"></span></div><canvas id="chart" role="img" aria-label="Live frequency history in horizontal strips, newest at top"></canvas><div class="foot"><span id="scale">Each strip uses the same selected-unit scale</span><span>Local time · Newest at top · Hollow dots, dashed = deduced calm (no closure for over 20 s) · Right column per strip: max, time-weighted avg (revolutions ÷ time, calm = 0), min, n, calm time; gaps excluded</span></div></section>
 <section class="chartbox" style="margin-top:20px" aria-label="Rain gauge">
 <div class="charthead"><h2>Rain · <span id="rainDayText">today</span></h2><div class="nav"><button id="rainOlder" title="Previous day">← Day</button><button id="rainNewer" title="Next day">Day →</button><button id="rainToday" class="active">Today</button></div></div>
 <div class="cards" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:0 0 14px">
@@ -74,15 +73,23 @@ function displayLabels(){
  $('calibrationNote').textContent=calibrated?`Calibration: knots = max(0, ${gain} × Hz ${calOffset<0?'−':'+'} ${Math.abs(calOffset)}). ${wind?'Applied to the display.':'Not used for Hz/RPM.'}`:`UNCALIBRATED: provisional 1 knot/Hz. ${wind?'Set your calibration before interpreting wind speed.':'Hz/RPM are independent of wind calibration.'}`;
 }
 const clock=()=>Date.now()/1000+offset;
-const endTime=()=>live ? (Math.floor(clock()/duration)+1)*duration : fixedEnd;
+const PRESETS=[10,30,60,300,600,1800,3600,7200,10800,21600,43200,86400];
+// Strip boundaries fall on local-time multiples of the duration (24 h strips start at midnight).
+const tzOff=()=>new Date().getTimezoneOffset()*60;
+const alignedEnd=t=>(Math.floor((t-tzOff())/duration)+1)*duration+tzOff();
+const endTime=()=>live ? alignedEnd(clock()) : fixedEnd;
+// Strips longer than 1 h load condensed history: per bucket, the slowest and fastest
+// revolutions plus totals for the strip average (one sample per second would be ~1M points).
+const condensed=()=>duration>3600, bucketSize=()=>duration/720;
+let buckets=[], lastLoad=0;
 const timeText=t=>new Date(t*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
 const dateText=t=>new Date(t*1000).toLocaleString();
 const fmt=(v,n=3)=>v==null?'—':Number(v).toFixed(n);
 function settings(){
  const d=Number($('duration').value);
- if(!Number.isInteger(d)||d<10||d>3600){$('duration').reportValidity();return false;}
+ if(!Number.isInteger(d)||d<10||d>86400){$('duration').reportValidity();return false;}
  duration=d;rows=Number($('rows').value);
- $('preset').value=[10,30,60,300,600,1800,3600].includes(d)?String(d):'custom';
+ $('preset').value=PRESETS.includes(d)?String(d):'custom';
  saveSettings();
  return true;
 }
@@ -90,9 +97,16 @@ async function get(url){const r=await fetch(url,{signal:AbortSignal.timeout(8000
 function updateState(data){state=data;offset=data.now-Date.now()/1000;cursor=data.cursor;paintMetrics();}
 async function load(){
  const gen=++generation;loaded=false;
- try{const end=endTime(), data=await get(`/api/history?start=${end-rows*duration}&end=${end}`);
-  if(gen!==generation)return;points=data.points;updateState(data);loaded=true;$('error').textContent='';draw();
+ try{const end=endTime(), q=condensed()?`&bucket=${bucketSize()}&calm=${CALM_S}`:'';
+  const data=await get(`/api/history?start=${end-rows*duration}&end=${end}${q}`);
+  if(gen!==generation)return;points=data.points;buckets=data.buckets||[];lastLoad=Date.now();updateState(data);loaded=true;$('error').textContent='';draw();
  }catch(e){if(gen===generation){$('error').textContent=`Cannot load history: ${e.message}`;loaded=true;}}
+}
+// Calm start for the live reading, or null (link must be fresh: a stale link is not calm).
+function liveCalm(now){
+ const p=state?.latest;
+ if(!p||!state.connected||p.pulse_at==null||now-p.received>75)return null;
+ return WindMath.liveCalmStart(p.pulse_at,p.count,now,CALM_S);
 }
 function paintMetrics(){
  if(!state)return;
@@ -105,18 +119,29 @@ function paintMetrics(){
  else if(!p){text='Waiting for sensor';good=false;}
  else if(radioAge>75){text='Radio link stale';good=false;}
  else if(p.hz==null){text='Waiting for full revolution';good=false;}
- else if(stale){text='Stopped / slow · last reading';good=false;}
+ const calmFrom=['Receiving','Waiting for full revolution'].includes(text)?liveCalm(now):null, quiet=calmFrom==null?0:now-calmFrom+CALM_S;
+ if(calmFrom!=null){text=`Calm · no closure for ${durText(quiet)}`;good=true;}
+ else if(stale&&text==='Receiving'){text='Stopped / slow · last reading';good=false;}
  $('status').textContent=text;$('status').className='status '+(good?'ok':'warn');
+ if(calmFrom!=null){
+  // Same argument as the graph: no closure for over CALM_S s means < 0.5 rev / CALM_S, shown as 0.
+  $('hz').textContent=fmt(0,units==='hz'?4:2);$('rpm').textContent=fmt(0,2);
+  $('period').textContent=`> ${Math.round(age??quiet)}`;
+  $('pair').textContent=`no reed closure for ${durText(quiet)}`;
+  $('hz').style.opacity='1';
+  $('freshness').textContent=`Deduced calm (no closure for over ${CALM_S} s) · last revolution ${durText(age??quiet)} ago`;
+ } else {
  $('hz').textContent=fmt(valueOf(p?.hz),units==='hz'?4:2);$('rpm').textContent=fmt(p?.hz==null?null:60*p.hz,2);
  $('period').textContent=p?.hz==null?'—':fmt(p.period_s,4);
- $('imbalance').textContent=p?.imbalance==null?'—':`${p.imbalance>=0?'+':''}${fmt(p.imbalance,2)}%`;
  $('pair').textContent=`A ${p?.hz==null?'—':fmt(p.a_s,4)+' s'} · B ${p?.hz==null?'—':fmt(p.b_s,4)+' s'}`;
  $('hz').style.opacity=good?'1':'.5';
  $('freshness').textContent=age==null?'First accepted edge is reference; third completes a revolution':`${good?'Latest':'Last known'} measurement · ${age.toFixed(1)} s old`;
+ }
  $('details').textContent=p?`Session ${p.session} · Sequence ${p.seq} · Completed revolutions ${p.revolutions} · Electrical pulses ${p.count}${p.clock?' · ⚠ Sensor on internal clock fallback (32 kHz crystal stopped): timing less accurate':''}${['W3','W4','W5'].includes(p.version)?` · Reed D5 ${p.pin?'open':'closed'}${p.pin_age_s==null?'':` (unchanged ${p.pin_age_s.toFixed(0)} s at last packet)`} · Raw D5 edges ${p.raw_edges}`:''} · RSSI ${p.rssi} dBm · SNR ${p.snr} dB · Last packet ${radioAge.toFixed(1)} s ago · Malformed frames ${state.malformed}`:`${state.error||'Receiver open; no W2–W4 packets yet.'} Malformed frames: ${state.malformed}`;
 }
 function draw(){
- const width=canvas.clientWidth, left=94, right=16, top=22, stripH=stripHeight, plotH=stripH-56, height=top+rows*stripH+12;
+ // Plot fills the strip height; per-strip summary stacks in a column at the right.
+ const width=canvas.clientWidth, left=94, right=width<550?92:124, top=22, stripH=stripHeight, plotH=stripH-30, height=top+rows*stripH+12;
  const ratio=window.devicePixelRatio||1;canvas.style.height=height+'px';canvas.width=Math.round(width*ratio);canvas.height=Math.round(height*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);
  const end=endTime(), start=end-duration*rows, plotWidth=width-left-right;
  const visible=points.filter(p=>p.t>=start&&p.t<end).sort((a,b)=>a.t-b.t);
@@ -124,18 +149,21 @@ function draw(){
  // All loaded points: a calm-spanning revolution that completes after this page still draws its calm.
  const series=WindMath.calmSeries(points.slice().sort((a,b)=>a.t-b.t),CALM_S), items=series.items, spans=series.spans;
  const lp=state?.latest, now0=clock();
- if(live&&lp&&state.connected&&lp.pulse_at!=null&&now0-lp.received<=75&&now0-lp.pulse_at>CALM_S){
-  // Live: no closure reported for CALM_S; provisional until the next revolution replaces it.
-  items.push({t:lp.pulse_at+CALM_S,hz:0,calm:true,provisional:true,stream:lp.stream,period:CALM_S},
-             {t:now0,hz:0,calm:true,provisional:true,stream:lp.stream,period:Math.max(CALM_S,now0-lp.pulse_at-CALM_S)});
-  spans.push({start:lp.pulse_at+CALM_S,end:now0,hz:0,calm:true});
+ const calmFrom=live?liveCalm(now0):null, liveCalmSpan=calmFrom==null?null:{start:calmFrom,end:now0,hz:0,calm:true};
+ if(liveCalmSpan){
+  // Live: no closure for CALM_S (certain; see liveCalmStart); provisional until the next revolution replaces it.
+  items.push({t:calmFrom,hz:0,calm:true,provisional:true,stream:lp.stream,period:CALM_S},
+             {t:now0,hz:0,calm:true,provisional:true,stream:lp.stream,period:Math.max(CALM_S,now0-calmFrom)});
+  spans.push(liveCalmSpan);
  }
- const fixed=Number($('ymax').value), scale=WindMath.niceScale(fixed>0?fixed:maximum*1.1,Math.max(2,Math.floor(plotH/28)),fixed>0), ymax=scale.max;
+ const joinSlack=condensed()?2*bucketSize():0;
+ const fixed=Number($('ymax').value), scale=WindMath.niceScale(fixed>0?fixed:maximum*1.1,Math.max(2,Math.floor(plotH/24)),fixed>0), ymax=scale.max;
  geometry={left,right,top,stripH,start,end,plotWidth,width,ymax,items};
  ctx.font='11px system-ui';ctx.textBaseline='middle';
- const ticks=width<550?4:5;
+ // Round tick spacing: 2–3 h strips in 20/30 min steps, 6–24 h in 1–4 h steps.
+ const ticks=duration>=7200&&duration%6===0?(width<550?3:6):(width<550?4:5);
  for(let row=0;row<rows;row++){
-  const y=top+row*stripH, rowStart=end-(row+1)*duration, base=y+12+plotH;
+  const y=top+row*stripH, rowStart=end-(row+1)*duration, base=y+6+plotH;
   ctx.fillStyle=row%2?'#132432':'#101e2b';ctx.fillRect(0,y,width,stripH);
   ctx.textAlign='left';ctx.fillStyle='#b8cbd8';ctx.fillText(timeText(rowStart),2,y+14);
   ctx.fillStyle='#7b95a9';ctx.fillText(new Date(rowStart*1000).toLocaleDateString([],{month:'short',day:'numeric'}),2,y+30);
@@ -144,38 +172,48 @@ function draw(){
    ctx.fillStyle='#839caf';ctx.textAlign='right';ctx.fillText(WindMath.tickLabel(tick,scale.step),left-5,yy,44);
   }
   for(let j=0;j<=ticks;j++){
-   const x=left+plotWidth*j/ticks;ctx.strokeStyle='#223746';ctx.beginPath();ctx.moveTo(x,y+12);ctx.lineTo(x,base);ctx.stroke();
+   const x=left+plotWidth*j/ticks;ctx.strokeStyle='#223746';ctx.beginPath();ctx.moveTo(x,y+6);ctx.lineTo(x,base);ctx.stroke();
    ctx.fillStyle='#839caf';ctx.textAlign=j===0?'left':j===ticks?'right':'center';
-   const elapsed=duration*j/ticks, value=duration<120?elapsed:elapsed/60;
-   ctx.fillText(`${value.toFixed(Number.isInteger(value)?0:1)}${duration<120?'s':'m'}`,x,base+16);
+   const elapsed=duration*j/ticks, [div,u]=duration<120?[1,'s']:duration<=10800?[60,'m']:[3600,'h'], value=elapsed/div;
+   ctx.fillText(`${value.toFixed(Number.isInteger(value)?0:1)}${u}`,x,base+12);
   }
   const rowPoints=[];let before=null,after=null;
   for(const p of items){if(p.t<rowStart)before=p;else if(p.t<rowStart+duration)rowPoints.push(p);else{after=p;break;}}
   if(before)rowPoints.unshift(before);if(after)rowPoints.push(after);
   const inRow=rowPoints.filter(p=>p.t>=rowStart&&p.t<rowStart+duration);
   const real=WindMath.stats(inRow.filter(p=>!p.calm).map(p=>valueOf(p.hz)));
-  const tw=WindMath.timeAverage(spans,rowStart,rowStart+duration,valueOf);
-  ctx.fillStyle='#b4c9d8';ctx.textAlign='right';ctx.font='10px system-ui';
-  const calmNote=tw&&tw.calm>=1?` · calm ${durText(tw.calm)}`:'';
-  const summaryText=tw?`min ${compact(tw.calm>0?0:real?real.min:0)} · avg ${compact(tw.avg)} · max ${compact(real?real.max:0)} ${unitLabel()}  (n=${real?real.count:0}${calmNote})`:'min — · avg — · max —  (no measurements)';
-  ctx.fillText(summaryText,width-right,y+stripH-8,width-8);ctx.font='11px system-ui';
-  ctx.save();ctx.beginPath();ctx.rect(left,y+10,plotWidth,plotH+4);ctx.clip();
+  let tw;
+  if(condensed()){
+   // Bucket totals give the average; add any live calm still in progress.
+   tw=WindMath.bucketAverage(buckets,rowStart,rowStart+duration,valueOf);
+   const o=liveCalmSpan?Math.min(liveCalmSpan.end,rowStart+duration)-Math.max(liveCalmSpan.start,rowStart):0;
+   if(o>0)tw=tw?{avg:tw.avg*tw.covered/(tw.covered+o),covered:tw.covered+o,calm:tw.calm+o,count:tw.count}:{avg:0,covered:o,calm:o,count:0};
+  } else tw=WindMath.timeAverage(spans,rowStart,rowStart+duration,valueOf);
+  const n=condensed()?(tw?tw.count:0):(real?real.count:0);
+  const lines=tw?[['max',`${compact(real?real.max:0)} ${unitLabel()}`],['avg',compact(tw.avg)],['min',compact(tw.calm>0?0:real?real.min:0)],['n',String(n)]].concat(tw.calm>=1?[['calm',durText(tw.calm)]]:[]):[['','no data']];
+  ctx.font='11px system-ui';
+  lines.forEach(([k,v],i)=>{const yy=y+14+i*15;if(yy>y+stripH-6)return;
+   ctx.textAlign='left';ctx.fillStyle='#7b95a9';ctx.fillText(k,width-right+10,yy);
+   ctx.textAlign='right';ctx.fillStyle='#b4c9d8';ctx.fillText(v,width-6,yy,right-44);});
+  // Dots only while they fit (about one per 4 px); denser strips draw lines only.
+  const dots=inRow.length<=plotWidth/4;
+  ctx.save();ctx.beginPath();ctx.rect(left,y+4,plotWidth,plotH+4);ctx.clip();
   let prev=null;ctx.strokeStyle='#68e4b5';ctx.fillStyle='#68e4b5';ctx.lineWidth=1.6;
   for(const p of rowPoints){
    const x=left+(p.t-rowStart)/duration*plotWidth, yy=base-itemValue(p)/ymax*plotH;
-   if(prev&&prev.p.stream===p.stream&&p.t-prev.p.t<=Math.max(20,2*Math.max(p.period,prev.p.period))){
+   if(prev&&prev.p.stream===p.stream&&p.t-prev.p.t<=Math.max(20,2*Math.max(p.period,prev.p.period))+joinSlack){
     if(p.calm||prev.p.calm)ctx.setLineDash([4,3]);
     ctx.beginPath();ctx.moveTo(prev.x,prev.y);ctx.lineTo(x,yy);ctx.stroke();ctx.setLineDash([]);
    }
-   ctx.beginPath();ctx.arc(x,yy,p.calm?2.5:2,0,2*Math.PI);
-   if(p.calm){ctx.lineWidth=1.2;ctx.stroke();ctx.lineWidth=1.6;}else ctx.fill();
+   if(dots){ctx.beginPath();ctx.arc(x,yy,p.calm?2.5:2,0,2*Math.PI);
+    if(p.calm){ctx.lineWidth=1.2;ctx.stroke();ctx.lineWidth=1.6;}else ctx.fill();}
    prev={p,x,y:yy};
   }
   ctx.restore();
-  const now=clock();if(live&&now>=rowStart&&now<rowStart+duration){const x=left+(now-rowStart)/duration*plotWidth;ctx.strokeStyle='#e4b26c';ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(x,y+8);ctx.lineTo(x,base);ctx.stroke();ctx.setLineDash([]);}
+  const now=clock();if(live&&now>=rowStart&&now<rowStart+duration){const x=left+(now-rowStart)/duration*plotWidth;ctx.strokeStyle='#e4b26c';ctx.setLineDash([3,4]);ctx.beginPath();ctx.moveTo(x,y+4);ctx.lineTo(x,base);ctx.stroke();ctx.setLineDash([]);}
  }
  $('range').textContent=`${dateText(start)} — ${dateText(end)}${live?' · LIVE':' · HISTORY'}`;
- $('scale').textContent=`0–${WindMath.tickLabel(ymax,scale.step)} ${unitLabel()} on every strip · ${visible.length} measurements`;
+ $('scale').textContent=`0–${WindMath.tickLabel(ymax,scale.step)} ${unitLabel()} on every strip · ${condensed()?`condensed: slowest and fastest revolution per ${durText(bucketSize())}`:`${visible.length} measurements`}`;
  $('live').className=live?'active':'';
 }
 // ---- Rain ----
@@ -257,7 +295,10 @@ new ResizeObserver(drawRain).observe(rainCanvas.parentElement);
 async function poll(){
  try{
   if(loaded){const gen=generation,data=await get(`/api/live?after=${cursor}`);
-   if(gen===generation){updateState(data);rainTick();if(live){const start=endTime()-rows*duration;points=points.concat(data.points).filter(p=>p.t>=start);} $('error').textContent='';draw();}
+   if(gen===generation){updateState(data);rainTick();
+    if(live&&condensed()){if(Date.now()-lastLoad>30000)load();}  // condensed history: refresh, don't append raw points
+    else if(live){const start=endTime()-rows*duration;points=points.concat(data.points).filter(p=>p.t>=start);}
+    $('error').textContent='';draw();}
   }
  }catch(e){$('error').textContent=`Server connection lost: ${e.message}. Retrying…`;$('status').textContent='Web connection lost';$('status').className='status warn';}
  finally{setTimeout(poll,1000);}
@@ -274,7 +315,7 @@ $('applyCalibration').onclick=()=>{
  $('ymax').value='';saveSettings();displayLabels();paintMetrics();draw();
 };
 $('older').onclick=()=>{fixedEnd=endTime()-rows*duration;live=false;load();};
-$('newer').onclick=()=>{fixedEnd=endTime()+rows*duration;live=fixedEnd>=(Math.floor(clock()/duration)+1)*duration;load();};
+$('newer').onclick=()=>{fixedEnd=endTime()+rows*duration;live=fixedEnd>=alignedEnd(clock());load();};
 $('live').onclick=()=>{live=true;load();};
 canvas.addEventListener('pointermove',e=>{
  if(!geometry)return;const g=geometry,r=canvas.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,row=Math.floor((y-g.top)/g.stripH);
@@ -283,13 +324,13 @@ canvas.addEventListener('pointermove',e=>{
  const t=rowStart+(x-g.left)/g.plotWidth*duration;
  let best=null,dist=Infinity;for(const p of g.items){if(p.t<rowStart||p.t>=rowStart+duration)continue;const d=Math.abs(p.t-t);if(d<dist){best=p;dist=d;}}
  if(!best||dist>duration*12/g.plotWidth){$('tooltip').style.display='none';return;}
- $('tooltip').textContent=best.calm?`${dateText(best.t)}\nDeduced calm: 0 ${unitLabel()}\nNo reed closure for over ${CALM_S} s${best.provisional?' (provisional, live)':''}\nDisplay only; not a measurement`:`${dateText(best.t)}\n${valueOf(best.hz).toFixed(4)} ${unitLabel()}${!calibrated&&!['hz','rpm'].includes(units)?' (uncalibrated)':''} · ${best.hz.toFixed(4)} Hz\nPeriod ${best.period.toFixed(5)} s\nA ${best.a.toFixed(5)} s · B ${best.b.toFixed(5)} s\nImbalance ${best.imbalance.toFixed(2)}% · Revolution ${best.revs}`;
+ $('tooltip').textContent=best.calm?`${dateText(best.t)}\nDeduced calm: 0 ${unitLabel()}\nNo reed closure for over ${CALM_S} s${best.provisional?' (provisional, live)':''}\nDisplay only; not a measurement`:`${dateText(best.t)}\n${valueOf(best.hz).toFixed(4)} ${unitLabel()}${!calibrated&&!['hz','rpm'].includes(units)?' (uncalibrated)':''} · ${best.hz.toFixed(4)} Hz\nPeriod ${best.period.toFixed(5)} s\nA ${best.a.toFixed(5)} s · B ${best.b.toFixed(5)} s\nRevolution ${best.revs}`;
  $('tooltip').style.display='block';$('tooltip').style.left=Math.max(0,Math.min(e.clientX+12,innerWidth-280))+'px';$('tooltip').style.top=Math.max(0,Math.min(e.clientY+12,innerHeight-140))+'px';
 });canvas.addEventListener('pointerleave',()=>$('tooltip').style.display='none');
 try{
  const s=JSON.parse(localStorage.getItem('windSettings'));
  if(s){
-  if(Number.isInteger(s.duration)&&s.duration>=10&&s.duration<=3600){duration=s.duration;$('duration').value=duration;}
+  if(Number.isInteger(s.duration)&&s.duration>=10&&s.duration<=86400){duration=s.duration;$('duration').value=duration;}
   if([4,6,8,12].includes(s.rows)){rows=s.rows;$('rows').value=rows;}
   if(Number.isFinite(s.stripHeight)&&s.stripHeight>=100&&s.stripHeight<=400){stripHeight=s.stripHeight;$('stripHeight').value=stripHeight;}
   if(Object.hasOwn(WindMath.labels,s.units)){units=s.units;$('units').value=units;}

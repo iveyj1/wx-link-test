@@ -77,7 +77,29 @@
     }
     return covered?{avg:sum/covered,covered,calm}:null;
   }
-  const api={labels,convert,stats,niceScale,tickLabel,calmSeries,timeAverage};
+  // Live calm: is "no closure for T" certain yet? The sensor reports at once only when a
+  // closure completes a revolution (odd count); a middle closure is seen only via the next
+  // heartbeat. After an odd count, a middle closure may be unreported, so certainty needs 2T;
+  // after an even count, T. margin covers radio latency. Returns the calm start or null.
+  function liveCalmStart(lastClosure, count, now, T=20, margin=3) {
+    if (lastClosure==null || !count) return null;
+    const odd=Number(String(count).slice(-1))%2===1;
+    return now-lastClosure > (odd?2*T:T)+margin ? lastClosure+T : null;
+  }
+  // Strip average from server buckets {t0,n,tsum,csum} (revolutions, their total period, and
+  // the calm part of it) for long strips where only per-bucket min/max points are sent. Moving
+  // time M = tsum - csum carries n revolutions; calm counts as 0. Exact for linear calibration.
+  function bucketAverage(buckets, from, to, value=v=>v) {
+    let covered=0, sum=0, calm=0, count=0;
+    for (const b of buckets) {
+      if (b.t0<from || b.t0>=to) continue;
+      const moving=b.tsum-b.csum;
+      if (moving>0) sum+=value(b.n/moving)*moving;
+      covered+=b.tsum; calm+=b.csum; count+=b.n;
+    }
+    return covered?{avg:sum/covered,covered,calm,count}:null;
+  }
+  const api={labels,convert,stats,niceScale,tickLabel,calmSeries,timeAverage,liveCalmStart,bucketAverage};
   if(typeof module!=='undefined' && module.exports) module.exports=api;
   else root.WindMath=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

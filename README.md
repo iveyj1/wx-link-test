@@ -75,7 +75,7 @@ Serves `http://<host>:8765/` on all interfaces, read-only, **without authenticat
 | `rain` | One row per packet whose tip count rose (`added` new tips) | 400 days |
 | `state` | Latest decoded packet | — |
 
-API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h), `/api/rain?start=&end=` (≤ 32 days). No `sqlite3` CLI is installed here; query with Python.
+API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bucket=<s>&calm=20`, condensed, ≤ 12 days), `/api/rain?start=&end=` (≤ 32 days). No `sqlite3` CLI is installed here; query with Python.
 
 ## Measurement design
 
@@ -97,7 +97,10 @@ API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h), `/api/ra
 ### Dashboard display rules
 * Gaps are not zero wind: lines break only on missing revolutions, sensor restarts or no data.
 * **Deduced calm (display only):** a half-revolution longer than 20 s means < 1.5 RPM, below resolution. The page draws 0 (hollow dots, dashed line) from 20 s after that half began until the closure that ended it, instead of the spanning revolution's meaningless average. A provisional zero is drawn live. A dashed zero during obvious wind points to a missed closure (wiring), not calm.
-* Strip average is time-weighted (revolutions ÷ time, calm = 0); min/max come from real points.
+* **Calm on the live cards:** the same argument applies to the current reading. Speed and RPM show 0, and the period shows "> N s", once no closure for 20 s is *certain*. The sensor reports a middle closure only with the next heartbeat, so after a completed revolution that takes 40 s; after a known middle closure, 20 s (plus 3 s latency margin). The status then reads "Calm · no closure for …". A stale radio link is never treated as calm.
+* Each strip's right column shows max, time-weighted average (revolutions ÷ time, calm = 0), min, n and calm time; min/max come from real points.
+* Strips can be 10 s to 24 h long, aligned to local time (24 h strips start at local midnight; a strip spanning a DST change is offset by an hour). Strips over 1 h load **condensed** history: per bucket (strip ÷ 720), the slowest and fastest revolution, so extremes and calms survive, plus revolution and calm totals for an exact strip average. Dots are drawn only while they fit (about one per 4 px).
+* The balance between half-turns (A vs B) is not shown: reed chatter makes it too erratic to use until the hardware is improved. A and B are still listed, because a very short one points to chatter.
 
 ## Lessons learned (why the firmware looks like this)
 
