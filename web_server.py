@@ -62,6 +62,9 @@ class Store:
         if 'clock' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
             # W4: 32 kHz source, 0 = crystal, 1 = internal fallback. NULL for W2/W3.
             self.db.execute('ALTER TABLE packets ADD COLUMN clock INTEGER')
+        if 'vbat_mv' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
+            # W6: battery millivolts (about 4.2 V while charging on USB). NULL before W6.
+            self.db.execute('ALTER TABLE packets ADD COLUMN vbat_mv INTEGER')
         row = self.db.execute("SELECT value FROM state WHERE key='latest'").fetchone()
         self.latest = json.loads(row[0]) if row else None
         self.connected = False
@@ -88,7 +91,7 @@ class Store:
 
     def accept(self, packet, received=None):
         received = time.time() if received is None else received
-        if packet['version'] not in ('W2', 'W3', 'W4', 'W5'):
+        if packet['version'] not in ('W2', 'W3', 'W4', 'W5', 'W6'):
             with self.lock:
                 self.error = 'Legacy W1 firmware: full-revolution frequency unavailable'
             return
@@ -113,7 +116,8 @@ class Store:
             self.db.execute('INSERT INTO runs VALUES(?,?,?,?) ON CONFLICT(session) DO UPDATE SET '
                             'last_t=excluded.last_t, version=excluded.version',
                             (packet['session'], packet['version'], received, received))
-            w3 = packet['version'] in ('W3', 'W4', 'W5')
+            w3 = packet['version'] in ('W3', 'W4', 'W5', 'W6')
+            latest['vbat_v'] = packet['vbat_mv'] / 1000 if 'vbat_mv' in packet else None
             if 'rain_tips' in packet:
                 tips = packet['rain_tips']
                 latest['rain_tips'] = str(tips)
@@ -132,12 +136,12 @@ class Store:
             if w3:
                 latest['raw_edges'] = str(packet['raw_edges'])
                 latest['pin_age_s'] = None if packet['pin_age'] == UNKNOWN else packet['pin_age'] / HZ
-            self.db.execute('INSERT INTO packets(t,version,session,seq,pulses,revs,uptime,pin,pin_age,raw_edges,rssi,snr,clock) '
-                            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            self.db.execute('INSERT INTO packets(t,version,session,seq,pulses,revs,uptime,pin,pin_age,raw_edges,rssi,snr,clock,vbat_mv) '
+                            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                             (received, packet['version'], packet['session'], packet['seq'], latest['count'],
                              latest['revolutions'], str(packet['uptime']), packet['pin'] if w3 else None,
                              str(packet['pin_age']) if w3 else None, latest['raw_edges'] if w3 else None,
-                             packet['rssi'], packet['snr'], packet.get('clock')))
+                             packet['rssi'], packet['snr'], packet.get('clock'), packet.get('vbat_mv')))
             new_measurement = period > 0 and (restart or latest['revolutions'] != old['revolutions'])
             if new_measurement:
                 self.db.execute('INSERT INTO samples(t,stream,hz,period,a,b,imbalance,revs,pulses) VALUES(?,?,?,?,?,?,?,?,?)',
@@ -193,6 +197,15 @@ class Store:
             else:
                 rows = self.db.execute('SELECT * FROM samples WHERE t >= ? AND t < ? ORDER BY t LIMIT 60000', (start, end)).fetchall()
             return dict(self.status(), cursor=cursor, points=[dict(row) for row in rows])
+
+    def battery(self, start, end, bucket):
+        """Battery voltage per time bucket (mean, min, max mV). Packets are kept 7 days."""
+        with self.lock:
+            rows = self.db.execute(
+                'SELECT :s + CAST((t - :s) / :b AS INTEGER) * :b AS t0, AVG(vbat_mv) AS mv, MIN(vbat_mv) AS lo, '
+                'MAX(vbat_mv) AS hi, COUNT(*) AS n FROM packets WHERE t >= :s AND t < :e AND vbat_mv IS NOT NULL '
+                'GROUP BY t0 ORDER BY t0', dict(s=start, e=end, b=bucket)).fetchall()
+            return dict(start=start, end=end, bucket=bucket, points=[dict(r) for r in rows], now=time.time())
 
     def rain_total(self, start, end):
         """Tips in [start, end) with what qualifies the total: sensor restarts inside the period
@@ -263,6 +276,15 @@ def handler_for(store):
                 elif url.path == '/math.js':
                     body = (ROOT / 'web' / 'math.js').read_bytes()
                     kind = 'text/javascript; charset=utf-8'
+                elif url.path == '/api/battery':
+                    params = parse_qs(url.query)
+                    end = float(params.get('end', [str(time.time())])[0])
+                    start = float(params.get('start', [str(end - 86400)])[0])
+                    if not all(map(math.isfinite, (start, end))) or not 0 < end - start <= 8 * 86400:
+                        raise ValueError('battery range must be positive and at most 8 days')
+                    bucket = max(60.0, (end - start) / 720)
+                    body = json.dumps(store.battery(start, end, bucket), allow_nan=False).encode()
+                    kind = 'application/json'
                 elif url.path == '/api/rain/total':
                     params = parse_qs(url.query)
                     start = float(params['start'][0])

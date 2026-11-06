@@ -52,6 +52,15 @@
 <button id="applyRain">Apply rain calibration</button></div><div class="caption">Each debounced D10 closure (about 100 ms per tip) is one tip; the reopening is not counted. Applies to live and historical totals; stored tip counts are unchanged. Saved in this browser.</div></details>
 <div id="rainNote" class="caption" role="status" style="margin-top:8px"></div>
 </section>
+<section class="chartbox" style="margin-top:20px" aria-label="Battery">
+<div class="charthead"><h2>Battery</h2><div class="nav"><label style="flex-direction:row;align-items:center">Range <select id="batRange"><option value="21600">6 hours</option><option value="86400" selected>24 hours</option><option value="259200">3 days</option><option value="604800">7 days</option></select></label></div></div>
+<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin:0 0 14px">
+<div class="card"><div class="muted">Battery voltage</div><div class="number"><span id="batV">—</span> <small>V</small></div><div class="caption" id="batNote">Needs sensor firmware W6</div></div>
+<div class="card"><div class="muted">Trend, last 6 h</div><div class="number"><span id="batSlope">—</span> <small>mV/h</small></div><div class="caption" id="batSlopeNote">least-squares slope of the readings</div></div>
+</div>
+<canvas id="batChart" role="img" aria-label="Battery voltage history"></canvas>
+<div class="foot"><span id="batScale"></span><span>Line = mean per interval · band = min–max · reads about 4.2 V while charging on USB · LiPo voltage is not a linear measure of remaining charge</span></div>
+</section>
 <div id="error" role="alert"></div>
 <div class="detail muted" id="details">Waiting for receiver…</div>
 <p class="caption">Rain: each tip is timed by the sensor and sent immediately; totals follow your browser's local midnight. If several tips arrive in one packet after radio loss, they are all credited at the time of the latest one.</p>
@@ -374,10 +383,64 @@ try{const r=JSON.parse(localStorage.getItem('rainSettings'));
   else if(sv&&sv.kind==='preset'&&Object.hasOwn(SINCE_LABELS,sv.key))since={kind:'preset',key:sv.key};}}catch(e){}
 $('mmPerTip').value=mmPerTip;$('rainUnits').value=rainUnits;$('rainDays').value=String(rainDays);rainLabels();paintSince();
 new ResizeObserver(drawRain).observe(rainCanvas.parentElement);
+// ---- Battery (W6+) ----
+const batCanvas=$('batChart'), bctx=batCanvas.getContext('2d');
+let batRange=86400, batPoints=[], batFetched=0, batGen=0;
+try{const r=Number(localStorage.getItem('batRange'));if([21600,86400,259200,604800].includes(r))batRange=r;}catch(e){}
+$('batRange').value=String(batRange);
+$('batRange').addEventListener('change',()=>{batRange=Number($('batRange').value);try{localStorage.setItem('batRange',String(batRange));}catch(e){}loadBat();});
+async function loadBat(){
+ const gen=++batGen, now=clock();
+ try{const d=await get(`/api/battery?start=${now-batRange}&end=${now}`);if(gen!==batGen)return;batPoints=d.points;batFetched=Date.now();drawBat();}
+ catch(e){if(gen===batGen)$('batScale').textContent=`Cannot load battery: ${e.message}`;}
+}
+// Least-squares slope (mV/h) over the last 6 h; needs at least 1 h of readings.
+function batSlope(now){
+ const pts=batPoints.filter(p=>p.t0>=now-21600);
+ if(pts.length<3||pts[pts.length-1].t0-pts[0].t0<3600)return null;
+ const n=pts.length,mx=pts.reduce((a,p)=>a+p.t0,0)/n,my=pts.reduce((a,p)=>a+p.mv,0)/n;
+ let sxy=0,sxx=0;for(const p of pts){sxy+=(p.t0-mx)*(p.mv-my);sxx+=(p.t0-mx)**2;}
+ return sxx?sxy/sxx*3600:null;
+}
+function paintBat(){
+ const p=state?.latest, now=clock();
+ $('batV').textContent=p?.vbat_v==null?'—':pad(p.vbat_v,2,1);
+ $('batNote').textContent=p?.vbat_v==null?'Needs sensor firmware W6':`at last packet, ${durText(Math.max(0,now-p.received))} ago`;
+ const sl=batSlope(now);
+ $('batSlope').textContent=sl==null?'—':(sl>=0?'+':'−')+pad(Math.abs(sl),1,3).trimStart();
+ $('batSlopeNote').textContent=sl==null?'needs at least 1 h of readings':sl<0?`about ${durText(Math.max(0,(batPoints[batPoints.length-1].mv-3500)/-sl*3600))} to 3.5 V at this rate (rough)`:'not discharging (charging, or flat)';
+}
+function drawBat(){
+ const width=batCanvas.clientWidth, height=170, left=60, right=16, top=12, plotH=height-top-30, plotW=width-left-right;
+ const ratio=window.devicePixelRatio||1;batCanvas.style.height=height+'px';batCanvas.width=Math.round(width*ratio);batCanvas.height=Math.round(height*ratio);bctx.setTransform(ratio,0,0,ratio,0,0);
+ bctx.fillStyle='#101e2b';bctx.fillRect(0,0,width,height);bctx.font='11px system-ui';bctx.textBaseline='middle';
+ const now=clock(), start=now-batRange, pts=batPoints;
+ let lo=Infinity,hi=-Infinity;for(const p of pts){lo=Math.min(lo,p.lo);hi=Math.max(hi,p.hi);}
+ if(!pts.length){lo=3500;hi=4200;}
+ const vlo=lo/1000-0.02, vhi=hi/1000+0.02, span=vhi-vlo;
+ const step=[0.01,0.02,0.05,0.1,0.2,0.5,1].find(s=>span/s<=5)||1;
+ const X=t=>left+(t-start)/batRange*plotW, Y=v=>top+plotH-(v-vlo)/span*plotH;
+ for(let v=Math.ceil(vlo/step)*step;v<=vhi+1e-9;v+=step){const y=Y(v);bctx.strokeStyle='#294052';bctx.beginPath();bctx.moveTo(left,y);bctx.lineTo(width-right,y);bctx.stroke();
+  bctx.fillStyle='#839caf';bctx.textAlign='right';bctx.fillText(v.toFixed(step<0.1?2:1)+' V',left-5,y);}
+ for(let j=0;j<=6;j++){const t=start+batRange*j/6,x=X(t);bctx.strokeStyle='#223746';bctx.beginPath();bctx.moveTo(x,top);bctx.lineTo(x,top+plotH);bctx.stroke();
+  bctx.fillStyle='#839caf';bctx.textAlign=j===0?'left':j===6?'right':'center';
+  bctx.fillText(batRange>86400?new Date(t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',hour12:false}):timeText(t).slice(0,5),x,top+plotH+16);}
+ // Band and mean line, broken where buckets are missing (no packets).
+ const gap=(a,b)=>b.t0-a.t0>3*Math.max(60,batRange/720);
+ bctx.fillStyle='rgba(108,184,255,.18)';
+ for(const p of pts){const x0=X(p.t0),x1=X(p.t0+Math.max(60,batRange/720));bctx.fillRect(x0,Y(p.hi/1000),Math.max(1,x1-x0),Math.max(1,Y(p.lo/1000)-Y(p.hi/1000)));}
+ bctx.strokeStyle='#6cb8ff';bctx.lineWidth=1.6;bctx.beginPath();
+ pts.forEach((p,i)=>{const x=X(p.t0),y=Y(p.mv/1000);if(i===0||gap(pts[i-1],p))bctx.moveTo(x,y);else bctx.lineTo(x,y);});
+ bctx.stroke();bctx.lineWidth=1;
+ $('batScale').textContent=pts.length?`${(lo/1000).toFixed(2)}–${(hi/1000).toFixed(2)} V over the last ${durText(batRange)}`:'No battery readings in this range yet (sensor firmware W6 needed)';
+ paintBat();
+}
+new ResizeObserver(drawBat).observe(batCanvas.parentElement);
+function batTick(){if(!state)return;paintBat();if(Date.now()-batFetched>60000)loadBat();}
 async function poll(){
  try{
   if(loaded){const gen=generation,data=await get(`/api/live?after=${cursor}`);
-   if(gen===generation){updateState(data);rainTick();
+   if(gen===generation){updateState(data);rainTick();batTick();
     if(live&&condensed()){if(Date.now()-lastLoad>30000)load();}  // condensed history: refresh, don't append raw points
     else if(live){const start=endTime()-rows*duration;points=points.concat(data.points).filter(p=>p.t>=start);}
     $('error').textContent='';draw();}

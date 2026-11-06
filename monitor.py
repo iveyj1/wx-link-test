@@ -29,10 +29,17 @@ def decode(line):
         raise ValueError('unexpected frame')
     fields = payload.split(',')
     version, session, seq = fields[:3]
-    if version == 'W5':
+    if version in ('W5', 'W6'):
         # All numbers hex; revolutions and period are derived (see link.ino report()).
-        if len(fields) != 18 or not re.fullmatch(r'[0-9a-f]{8}', session):
-            raise ValueError('invalid W5 frame')
+        # W6 = W5 + battery millivolts.
+        if len(fields) != (18 if version == 'W5' else 19) or not re.fullmatch(r'[0-9a-f]{8}', session):
+            raise ValueError(f'invalid {version} frame')
+        vbat = None
+        if version == 'W6':
+            *fields, vbat = fields
+            vbat = hex64(vbat)
+            if vbat > 0xffff:
+                raise ValueError('invalid battery voltage')
         (_, _, seq, count, a, b, age, rev_age, uptime, pin, pin_age, raw_edges, clock,
          tips, tip_interval, tip_age, rain_pin, rain_raw) = fields
         if clock not in ('0', '1') or pin not in ('0', '1') or rain_pin not in ('0', '1'):
@@ -44,6 +51,8 @@ def decode(line):
                      pin=int(pin), pin_age=hex64(pin_age), raw_edges=hex64(raw_edges),
                      rain_tips=hex64(tips), rain_interval=hex64(tip_interval),
                      rain_age=hex64(tip_age), rain_pin=int(rain_pin), rain_raw_edges=hex64(rain_raw))
+        if vbat is not None:
+            extra['vbat_mv'] = vbat
         if extra['rain_raw_edges'] < extra['rain_tips']:
             raise ValueError('fewer rain raw edges than tips')
         if (extra['rain_age'] == UNKNOWN) != (extra['rain_tips'] == 0) or (
@@ -76,10 +85,10 @@ def decode(line):
     data = dict(version=version, session=session, seq=int(seq), count=int(count),
                 period=int(period), age=int(age), uptime=int(uptime),
                 rssi=int(rssi), snr=int(snr), **extra)
-    if version in ('W4', 'W5'):
+    if version in ('W4', 'W5', 'W6'):
         data['clock'] = int(clock)  # 0 = crystal, 1 = internal fallback (less accurate timing)
     values = [data[k] for k in ('count', 'period', 'age', 'uptime')]
-    if version in ('W2', 'W3', 'W4', 'W5'):
+    if version in ('W2', 'W3', 'W4', 'W5', 'W6'):
         values += [extra[k] for k in extra]
         if extra['revolutions'] != max(0, (data['count'] - 1) // 2):
             raise ValueError('inconsistent revolution count')
@@ -87,7 +96,7 @@ def decode(line):
             raise ValueError('inconsistent paired period')
         if bool(extra['revolutions']) != bool(data['period']):
             raise ValueError('inconsistent period validity')
-    if version in ('W3', 'W4', 'W5') and extra['raw_edges'] < data['count']:
+    if version in ('W3', 'W4', 'W5', 'W6') and extra['raw_edges'] < data['count']:
         raise ValueError('fewer raw edges than counted pulses')
     if any(not 0 <= value <= UNKNOWN for value in values):
         raise ValueError('invalid unsigned value')
@@ -121,7 +130,7 @@ def format_measurement(data):
 
 def reed_state(data):
     """W3 raw D5 diagnostics; empty for W2. D5 is active-low with a pull-up: 1 = open."""
-    if data['version'] not in ('W3', 'W4', 'W5'):
+    if data['version'] not in ('W3', 'W4', 'W5', 'W6'):
         return ''
     level = 'open(high)' if data['pin'] else 'closed(low)'
     clock = 'CLOCK=INTERNAL_FALLBACK(timing less accurate) ' if data.get('clock') else ''
@@ -131,6 +140,8 @@ def reed_state(data):
                  f"{seconds(data['rain_interval']) if data['rain_interval'] else 'unknown'} "
                  f"rain_age={seconds(data['rain_age'])} D10={'open' if data['rain_pin'] else 'closed'} "
                  f"rain_raw_edges={data['rain_raw_edges']} ")
+    if 'vbat_mv' in data:
+        text += f"VBAT={data['vbat_mv'] / 1000:.3f}V "
     return text
 
 

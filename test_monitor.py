@@ -66,6 +66,21 @@ class MonitorTests(unittest.TestCase):
         self.assertLessEqual(len(payload), 240)
         self.assertLess(len(frame(payload)), 256)
 
+    def test_w6_battery(self):
+        base = 'W6,abcd1234,2,3,2000,6000,148,148,186a0,1,ffffffffffffffff,3,0,0,0,ffffffffffffffff,1,0'
+        data = decode(frame(base + ',1036'))
+        self.assertEqual(data['vbat_mv'], 0x1036)
+        self.assertIn('VBAT=4.150V', format_measurement(data))
+        for bad in (base, base + ',10000', base + ',x', base + ',1036,0'):
+            with self.assertRaises(ValueError, msg=bad):
+                decode(frame(bad))
+        # Worst case: every uint64 field at 16 hex digits, 6600 mV.
+        f = 'f' * 16
+        worst = f'W6,ffffffff,ffffffff,{f},{f},{f},{f},{f},{f},1,{f},{f},1,{f},{f},{f},1,{f},19c8'
+        self.assertEqual(len(worst), 235)
+        self.assertLessEqual(len(worst), 240)
+        self.assertLessEqual(len(f'+RCV=1,{len(worst)},{worst},-120,-20'), 255)  # receiver line buffer
+
     def test_max_length(self):
         # All eight uint64 fields at full width still fit the module and receiver.
         payload = 'W2,ffffffff,4294967295,' + ','.join([str(UNKNOWN)]*8)

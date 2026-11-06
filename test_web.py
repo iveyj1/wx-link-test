@@ -132,6 +132,18 @@ class WebTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 decode(f'+RCV=1,{len(bad)},{bad},-80,9')
 
+    def test_w6_battery_logged(self):
+        now = 1_800_000_000.0
+        for i, mv in enumerate((4100, 4090, 4080)):
+            p = (f'W6,abcd1234,{i+1:x},3,2000,6000,148,148,{100000 + i * 32768 * 60:x},1,ffffffffffffffff,3,0,'
+                 f'0,0,ffffffffffffffff,1,0,{mv:x}')
+            self.store.accept(decode(f'+RCV=1,{len(p)},{p},-80,9'), now + 60 * i)
+        self.assertEqual(self.store.latest['vbat_v'], 4.08)
+        pts = self.store.battery(now, now + 600, 600)['points']
+        self.assertEqual((len(pts), pts[0]['mv'], pts[0]['lo'], pts[0]['hi'], pts[0]['n']), (1, 4090, 4080, 4100, 3))
+        self.w5(9, 0, received=now + 300)       # W5 packets carry no battery value
+        self.assertIsNone(self.store.latest['vbat_v'])
+
     def test_condensed_history(self):
         now = 1_800_000_000.0
         # 30 one-second revolutions in one 60 s bucket, then a 300 s calm revolution.
@@ -168,6 +180,8 @@ class WebTests(unittest.TestCase):
             with urlopen(base+'/math.js') as response:
                 self.assertIn(b'niceScale', response.read())
                 self.assertIn('javascript', response.headers['Content-Type'])
+            with urlopen(base+'/api/battery?start=0&end=86400') as response:
+                self.assertEqual(json.load(response)['points'], [])
             with urlopen(base+'/api/rain/total?start=0&end=86400') as response:
                 self.assertEqual(json.load(response)['tips'], 0)
             with urlopen(base+'/api/rain?start=0&end=86400') as response:

@@ -2,7 +2,7 @@
 
 A battery sensor counts anemometer and tipping-bucket rain-gauge reed closures and reports them over LoRa. A USB-attached receiver forwards packets to a host, which records them in SQLite and serves a live LAN dashboard.
 
-The sensor runs firmware **W5-rain2**. The receiver runs the same sketch built with `SENSOR=0`.
+The sensor runs firmware **W5-rain2**; **W6-vbat1** (adds battery voltage) is built and tested but not yet flashed. The receiver runs the same sketch built with `SENSOR=0`.
 
 ## Hardware
 
@@ -96,7 +96,12 @@ API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bu
 ### Reporting and packets
 * A completed revolution or a rain tip triggers a report immediately, limited to one send per second (from completion), with a 5 s backoff after a failure and a 60 s heartbeat otherwise. Events during the cooldown are coalesced.
 * **Counts are cumulative since boot**, so a lost packet loses no pulses or tips; the next packet carries the totals. Counts are RAM-only and restart with a new session ID on reset.
-* **W5 payload** (all numbers lowercase hex, worst case 230 bytes, under the radio's 240-byte limit): `W5,session,seq,count,A,B,age,rev_age,uptime,pin,pin_age,raw_edges,clock,rain_tips,rain_interval,rain_age,rain_pin,rain_raw_edges`. Revolutions and period are derived by the decoder. Ages of `ffffffffffffffff` mean "never". `pin` = 1 is open, `clock` = 1 is the internal fallback. The receiver forwards `+RCV=1,len,payload,RSSI,SNR`. The decoder still accepts W1–W4.
+* **W6 payload** (all numbers lowercase hex, worst case 235 bytes, under the radio's 240-byte limit and the receiver's 255-character line): `W6,session,seq,count,A,B,age,rev_age,uptime,pin,pin_age,raw_edges,clock,rain_tips,rain_interval,rain_age,rain_pin,rain_raw_edges,vbat_mv`. W5 is the same without `vbat_mv`. Revolutions and period are derived by the decoder. Ages of `ffffffffffffffff` mean "never". `pin` = 1 is open, `clock` = 1 is the internal fallback. The receiver forwards `+RCV=1,len,payload,RSSI,SNR`. The decoder still accepts W1–W5.
+
+### Battery
+* `vbat_mv` is read from A7/D9 (the Feather's 1:2 battery divider): eight 12-bit reads averaged, 3.3 V full scale, sampled when each report is built. On USB it shows the charger (about 4.2 V).
+* The dashboard's Battery panel shows the latest voltage, the last-6-h least-squares trend in mV/h with a rough time to 3.5 V, and a 6 h–7 day chart (mean line and min–max band). `/api/battery?start=&end=` returns per-bucket mean/min/max from the packet log (7 days).
+* **Estimate before measurement (1200 mAh):** about 5–8 mA average, so about 5–9 days, dominated by the MCU at 48 MHz in light sleep (~4–6 mA) because deep standby is disabled. Radio ≈ 0.8 mA at one report per 3 s. With deep standby re-enabled, roughly 1 mA (6–7 weeks).
 
 ### Dashboard display rules
 * Gaps are not zero wind: lines break only on missing revolutions, sensor restarts or no data.
@@ -134,5 +139,5 @@ API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bu
 
 * Wind calibration (gain/offset) has not been measured.
 * The rain calibration is a geometric estimate; verify with a known volume.
-* Power consumption and battery life are unmeasured; deep standby remains disabled.
+* Power consumption and battery life are unmeasured (W6 battery telemetry pending flash); deep standby remains disabled.
 * RF margin outdoors was marginal at times (RSSI ≈ −100 dBm); there is no acknowledgement or retransmit beyond cumulative counts.

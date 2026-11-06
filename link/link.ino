@@ -8,9 +8,10 @@
 #define SENSOR 1
 #endif
 
-#define FIRMWARE "W5-rain2"
+#define FIRMWARE "W6-vbat1"
 constexpr uint32_t HZ = 32768;
 constexpr uint8_t REED = 5;
+constexpr uint8_t VBAT = A7; // = D9: battery through the Feather's 1:2 divider (do not use D9 otherwise)
 constexpr uint8_t RAIN = 10; // D10 = PA18, EXTINT2: tipping-bucket reed to GND (internal pull-up); ~100 ms closure per tip
 constexpr uint8_t RADIO_RESET = 6; // D6 -> RYLR998 NRST (active low); harmless if unwired
 constexpr uint32_t RADIO_RESET_AFTER_FAILS = 3;
@@ -399,6 +400,13 @@ char *hex64(uint64_t n, char *out) {
   while (i) *out++ = temp[--i];
   return out;
 }
+// Battery millivolts: average of 8 12-bit reads, 3.3 V full scale, x2 for the divider.
+// On USB the charger holds this near 4.2 V; it reflects the cell only on battery.
+uint32_t readVbatMv() {
+  uint32_t sum = 0;
+  for (unsigned i = 0; i < 8; ++i) sum += analogRead(VBAT);
+  return (sum * 2 * 3300 + 8 * 4095 / 2) / (8 * 4095);
+}
 void report() {
   StageScope stage(ST_REPORT);
   traceStage(ST_SNAPSHOT);
@@ -420,15 +428,16 @@ void report() {
   interrupts();
   traceStage(ST_REPORT);
   if (!due) return;
+  const uint32_t vbatMv = readVbatMv();
   char payload[256], cmd[288];
-  // W5: every number is lowercase hex (uint64 <= 16 digits) so the worst case is provably
-  // 230 bytes, under the radio's 240-byte limit. Revolutions and period are omitted: the
+  // W6: every number is lowercase hex (uint64 <= 16 digits) so the worst case is provably
+  // 235 bytes, under the radio's 240-byte limit (and the receiver's 255-character line). Revolutions and period are omitted: the
   // receiver derives them exactly (revolutions = (count-1)/2, period = A + B).
   //   W5,session,seq,count,A,B,age,rev_age,uptime,pin,pin_age,raw_edges,clock,
-  //      rain_tips,rain_interval,rain_age,rain_pin,rain_raw_edges
+  //      rain_tips,rain_interval,rain_age,rain_pin,rain_raw_edges,vbat_mv
   // Pins: 1 = open/high. rain_interval 0 = fewer than two tips; ages all-f = never.
   const uint64_t fields[] = {count,intervalA,intervalB,age,revAge,now};
-  char *out = payload + snprintf(payload,sizeof(payload),"W5,%08lx,%lx",
+  char *out = payload + snprintf(payload,sizeof(payload),"W6,%08lx,%lx",
                                  (unsigned long)session,(unsigned long)++sequence);
   for (uint64_t v : fields) out = hex64(v,out);
   *out++ = ','; *out++ = '0' + pin;
@@ -437,6 +446,7 @@ void report() {
   out = hex64(tips,out); out = hex64(tipInterval,out); out = hex64(tipAge,out);
   *out++ = ','; *out++ = '0' + rainPin;
   out = hex64(tipEdges,out);
+  out = hex64(vbatMv,out);
   *out = 0;
   logLine(payload);
   if (SENSOR && consecutiveFails >= RADIO_RESET_AFTER_FAILS &&
@@ -497,6 +507,7 @@ void setup() {
     while (GCLK->STATUS.bit.SYNCBUSY) {}
   }
   for (unsigned i=0;i<32;i++) session = (session << 1) ^ analogRead(A0) ^ uint32_t(ticks());
+  analogReadResolution(12); // battery reads
   traceRecord.session = session;
   wdtBegin();
   delay(1500);
@@ -546,15 +557,15 @@ void serviceUsb() {
         interrupts();
         char re[21];
         decimal64(n,c); decimal64(rev,r); decimal64(t,p); decimal64(e,re);
-        snprintf(msg,sizeof(msg),"# %s W5 radio=%s pin5=%d pulses=%s revolutions=%s rev_period_ticks=%s raw_edges=%s",
+        snprintf(msg,sizeof(msg),"# %s W6 radio=%s pin5=%d pulses=%s revolutions=%s rev_period_ticks=%s raw_edges=%s",
                  SENSOR ? "sensor" : "receiver",radioOK ? "OK" : "ERROR",digitalRead(REED),c,r,p,re);
         logLine(msg);
         noInterrupts();
         uint64_t tipsNow = rain.tips, tipEdgesNow = rainRawEdges;
         interrupts();
         decimal64(tipsNow,c); decimal64(tipEdgesNow,re);
-        snprintf(msg,sizeof(msg),"# rain D10=%d tips=%s raw_edges=%s (1 tip per debounced closure; clean = 2 edges per tip)",
-                 digitalRead(RAIN),c,re);
+        snprintf(msg,sizeof(msg),"# rain D10=%d tips=%s raw_edges=%s (1 tip per debounced closure; clean = 2 edges per tip) vbat=%lu mV",
+                 digitalRead(RAIN),c,re,(unsigned long)readVbatMv());
         logLine(msg);
         snprintf(msg,sizeof(msg),"# fw=" FIRMWARE " session=%08lx reset=0x%02x sleepprm=%u standby=%lu/%lu tx_ok=%lu tx_fail=%lu",
                  (unsigned long)session,resetCause,(unsigned)NVMCTRL->CTRLB.bit.SLEEPPRM,
