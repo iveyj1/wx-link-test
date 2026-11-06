@@ -16,6 +16,7 @@ from monitor import RECEIVER, HZ, UNKNOWN, decode
 ROOT = Path(__file__).resolve().parent
 RETENTION = 7 * 86400
 RAIN_RETENTION = 400 * 86400  # rain rows are tiny; keep over a year of daily totals
+GAP = 3600  # no packet for this long is recorded as a data gap
 
 
 class Store:
@@ -48,7 +49,16 @@ class Store:
             id INTEGER PRIMARY KEY AUTOINCREMENT, t REAL NOT NULL, session TEXT NOT NULL,
             tips TEXT NOT NULL, added INTEGER NOT NULL, interval REAL);
           CREATE INDEX IF NOT EXISTS rain_time ON rain(t);
+          -- Long-lived context for rain totals (packets are kept only 7 days): one row per sensor
+          -- run (a reset starts a new session, and tips not yet reported before it are lost),
+          -- and every stretch of more than GAP seconds without packets.
+          CREATE TABLE IF NOT EXISTS runs (
+            session TEXT PRIMARY KEY, version TEXT NOT NULL, first_t REAL NOT NULL, last_t REAL NOT NULL);
+          CREATE TABLE IF NOT EXISTS gaps (start REAL NOT NULL, end REAL NOT NULL);
+          CREATE INDEX IF NOT EXISTS gap_time ON gaps(start);
         ''')
+        if not self.db.execute('SELECT 1 FROM runs LIMIT 1').fetchone():
+            self.backfill_runs()
         if 'clock' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
             # W4: 32 kHz source, 0 = crystal, 1 = internal fallback. NULL for W2/W3.
             self.db.execute('ALTER TABLE packets ADD COLUMN clock INTEGER')
@@ -59,6 +69,18 @@ class Store:
         self.last_serial = None
         self.malformed = 0
         self.last_prune = 0
+
+    def backfill_runs(self):
+        """Seed runs/gaps from the packet log the first time (it holds the last 7 days)."""
+        with self.lock:
+            self.db.execute('INSERT OR IGNORE INTO runs SELECT session, MAX(version), MIN(t), MAX(t) '
+                            'FROM packets GROUP BY session')
+            prev = None
+            for (t,) in self.db.execute('SELECT t FROM packets ORDER BY t').fetchall():
+                if prev is not None and t - prev > GAP:
+                    self.db.execute('INSERT INTO gaps VALUES(?,?)', (prev, t))
+                prev = t
+            self.db.commit()
 
     def connection(self, connected, error=None):
         with self.lock:
@@ -86,6 +108,11 @@ class Store:
             # Counts stay strings in JSON/SQLite; JavaScript numbers cannot represent all uint64s.
             latest['count'] = str(packet['count'])
             latest['revolutions'] = str(packet['revolutions'])
+            if old and received - old['received'] > GAP:
+                self.db.execute('INSERT INTO gaps VALUES(?,?)', (old['received'], received))
+            self.db.execute('INSERT INTO runs VALUES(?,?,?,?) ON CONFLICT(session) DO UPDATE SET '
+                            'last_t=excluded.last_t, version=excluded.version',
+                            (packet['session'], packet['version'], received, received))
             w3 = packet['version'] in ('W3', 'W4', 'W5')
             if 'rain_tips' in packet:
                 tips = packet['rain_tips']
@@ -126,6 +153,8 @@ class Store:
                 self.db.execute('DELETE FROM samples WHERE t < ?', (received - RETENTION,))
                 self.db.execute('DELETE FROM packets WHERE t < ?', (received - RETENTION,))
                 self.db.execute('DELETE FROM rain WHERE t < ?', (received - RAIN_RETENTION,))
+                self.db.execute('DELETE FROM runs WHERE last_t < ?', (received - RAIN_RETENTION,))
+                self.db.execute('DELETE FROM gaps WHERE end < ?', (received - RAIN_RETENTION,))
                 self.last_prune = received
             self.db.commit()
 
@@ -164,6 +193,23 @@ class Store:
             else:
                 rows = self.db.execute('SELECT * FROM samples WHERE t >= ? AND t < ? ORDER BY t LIMIT 60000', (start, end)).fetchall()
             return dict(self.status(), cursor=cursor, points=[dict(row) for row in rows])
+
+    def rain_total(self, start, end):
+        """Tips in [start, end) with what qualifies the total: sensor restarts inside the period
+        (unreported tips before each reset are lost), packet gaps over GAP (fine within one
+        sensor run, since counts are cumulative), and when rain logging (W5+) begins."""
+        with self.lock:
+            tips, first, last = self.db.execute(
+                'SELECT COALESCE(SUM(added),0), MIN(t), MAX(t) FROM rain WHERE t >= ? AND t < ?',
+                (start, end)).fetchone()
+            restarts = [r[0] for r in self.db.execute(
+                'SELECT first_t FROM runs WHERE first_t > ? AND first_t < ? '
+                'AND first_t > (SELECT MIN(first_t) FROM runs) ORDER BY first_t', (start, end))]
+            gaps = [dict(start=a, end=b) for a, b in self.db.execute(
+                'SELECT start, end FROM gaps WHERE end > ? AND start < ? ORDER BY start', (start, end))]
+            since = self.db.execute("SELECT MIN(first_t) FROM runs WHERE version >= 'W5'").fetchone()[0]
+            return dict(start=start, end=end, tips=tips, first_tip=first, last_tip=last,
+                        restarts=restarts, gaps=gaps, rain_logging_since=since, now=time.time())
 
     def rain(self, start, end):
         """Tip rows in [start, end); the browser applies mm/tip calibration and local midnights."""
@@ -217,6 +263,14 @@ def handler_for(store):
                 elif url.path == '/math.js':
                     body = (ROOT / 'web' / 'math.js').read_bytes()
                     kind = 'text/javascript; charset=utf-8'
+                elif url.path == '/api/rain/total':
+                    params = parse_qs(url.query)
+                    start = float(params['start'][0])
+                    end = float(params.get('end', [str(time.time())])[0])
+                    if not all(map(math.isfinite, (start, end))) or not 0 < end - start <= 800 * 86400:
+                        raise ValueError('rain total range must be positive and at most 800 days')
+                    body = json.dumps(store.rain_total(start, end), allow_nan=False).encode()
+                    kind = 'application/json'
                 elif url.path == '/api/rain':
                     params = parse_qs(url.query)
                     start, end = float(params['start'][0]), float(params['end'][0])

@@ -99,6 +99,25 @@ class WebTests(unittest.TestCase):
         self.w5(1, 2, interval=32768, received=now+200, session='ffffffff', uptime=200000)
         self.assertEqual(sum(r['added'] for r in self.store.rain(now, now+1000)['tips']), 6)
 
+    def test_rain_total_with_restart_and_gap(self):
+        now = 1_800_000_000.0
+        self.w5(1, 0, received=now)
+        self.w5(2, 3, interval=32768, received=now + 100)
+        self.w5(3, 5, interval=32768, received=now + 100 + 2 * 3600)   # 2 h without packets
+        self.w5(1, 2, interval=32768, received=now + 9000, session='ffffffff', uptime=50000)  # reset
+        total = self.store.rain_total(now + 50, now + 10000)
+        self.assertEqual(total['tips'], 3 + 2 + 2)
+        self.assertEqual(total['restarts'], [now + 9000])
+        self.assertEqual(total['gaps'], [dict(start=now + 100, end=now + 100 + 7200)])
+        self.assertEqual(total['rain_logging_since'], now)
+        quiet = self.store.rain_total(now + 9500, now + 9600)
+        self.assertEqual((quiet['tips'], quiet['restarts'], quiet['gaps']), (0, [], []))
+        # Runs and gaps are rebuilt from the packet log when the tables start empty.
+        self.store.db.execute('DELETE FROM runs'); self.store.db.execute('DELETE FROM gaps')
+        self.store.backfill_runs()
+        self.assertEqual(self.store.rain_total(now + 50, now + 10000)['gaps'], total['gaps'])
+        self.assertEqual(self.store.rain_total(now + 50, now + 10000)['restarts'], [now + 9000])
+
     def test_w5_rain_only_report_is_not_a_wind_sample(self):
         self.w5(1, 0)
         self.w5(2, 1)
@@ -149,11 +168,13 @@ class WebTests(unittest.TestCase):
             with urlopen(base+'/math.js') as response:
                 self.assertIn(b'niceScale', response.read())
                 self.assertIn('javascript', response.headers['Content-Type'])
+            with urlopen(base+'/api/rain/total?start=0&end=86400') as response:
+                self.assertEqual(json.load(response)['tips'], 0)
             with urlopen(base+'/api/rain?start=0&end=86400') as response:
                 self.assertEqual(json.load(response)['tips'], [])
             with urlopen(base+'/api/history?start=0&end=86400&bucket=120&calm=20') as response:
                 self.assertEqual(json.load(response)['buckets'], [])
-            for query in ('/api/rain?start=0', '/api/rain?start=0&end=9999999', '/api/history?start=nan&end=1',
+            for query in ('/api/rain/total?start=x', '/api/rain/total?start=5&end=1', '/api/rain?start=0', '/api/rain?start=0&end=9999999', '/api/history?start=nan&end=1',
                           '/api/history?start=0&end=86400&bucket=0.5', '/api/history?start=0&end=86400', '/api/history?start=0&end=50000', '/api/live?after=-1', '/../../etc/passwd'):
                 with self.assertRaises(HTTPError):
                     urlopen(base+query)

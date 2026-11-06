@@ -31,14 +31,21 @@
 <div id="calibrationNote" class="warn" role="status" style="margin-bottom:12px">UNCALIBRATED: provisional 1 knot/Hz. Set your calibration before interpreting wind speed.</div>
 <section class="chartbox"><div class="charthead"><h2 id="chartTitle">Wind speed · kn</h2><span id="range" class="muted"></span></div><canvas id="chart" role="img" aria-label="Live frequency history in horizontal strips, newest at top"></canvas><div class="foot"><span id="scale">Each strip uses the same selected-unit scale</span><span>Local time · Newest at top · Hollow dots, dashed = deduced calm (no closure for over 20 s) · Right column per strip: max, time-weighted avg (revolutions ÷ time, calm = 0), min, n, calm time; gaps excluded</span></div></section>
 <section class="chartbox" style="margin-top:20px" aria-label="Rain gauge">
-<div class="charthead"><h2>Rain · <span id="rainDayText">today</span></h2><div class="nav"><button id="rainOlder" title="Previous day">← Day</button><button id="rainNewer" title="Next day">Day →</button><button id="rainToday" class="active">Today</button></div></div>
-<div class="cards" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:0 0 14px">
+<div class="charthead"><h2>Rain · <span id="rainDayText">today</span></h2><div class="nav"><label style="flex-direction:row;align-items:center">Days shown <select id="rainDays"><option>1</option><option>2</option><option>3</option><option>4</option></select></label><button id="rainOlder" title="Previous day">← Day</button><button id="rainNewer" title="Next day">Day →</button><button id="rainToday" class="active">Today</button></div></div>
+<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin:0 0 14px">
 <div class="card"><div class="muted">Rain, midnight to midnight</div><div class="number"><span id="rainTotal">—</span> <small class="rainUnit">mm</small></div><div class="caption" id="rainTips">—</div></div>
 <div class="card"><div class="muted">Rain rate</div><div class="number"><span id="rainRate">—</span> <small class="rainUnit2">mm/h</small></div><div class="caption" id="rainRateNote">calibration ÷ time between the last two tips</div></div>
 <div class="card"><div class="muted">Last tip</div><div class="number" style="font-size:24px" id="rainLast">—</div><div class="caption" id="rainGauge">—</div></div>
+<div class="card"><div class="muted" id="sinceTitle">Since mark</div><div class="number"><span id="sinceTotal">—</span> <small class="rainUnit3">mm</small></div><div class="caption" id="sinceInfo">No mark set</div><div class="caption warn" id="sinceWarn"></div></div>
 </div>
-<canvas id="rainChart" role="img" aria-label="Cumulative rain since local midnight with hourly totals"></canvas>
-<div class="foot"><span id="rainScale"></span><span>Line = cumulative since local midnight · Bars = rain in each hour (= mm/h average) · Lost packets are recovered from the cumulative count</span></div>
+<div class="controls" style="padding:0 0 14px">
+<label>Total since<select id="sincePreset"><option value="none">— no mark —</option><option value="fixed">Mark / date below</option><option value="h1">Last 1 hour</option><option value="h24">Last 24 hours</option><option value="h72">Last 72 hours</option><option value="d7">Last 7 days</option><option value="month">Month to date</option><option value="year">Year to date</option><option value="wy">Water year (from Oct 1)</option></select></label>
+<button id="markNow" title="Start counting from now, like emptying a manual gauge">Mark now</button>
+<label>Since date and time<input id="sinceAt" type="datetime-local" style="width:auto"></label>
+<button id="sinceSet">Set</button><button id="sinceClear">Clear</button>
+</div>
+<canvas id="rainChart" role="img" aria-label="Rain per day, each day cumulative from local midnight, with hourly totals"></canvas>
+<div class="foot"><span id="rainScale"></span><span>Line = cumulative within each day, from 0 at local midnight · Bars = rain in each hour (= mm/h average) · Lost packets are recovered from the cumulative count</span></div>
 <details style="margin-top:12px"><summary>Rain calibration · per tip</summary><div class="controls">
 <label>Rain per tip, mm<input id="mmPerTip" type="number" min="0.000001" max="1000" step="any" value="0.369" required></label>
 <label>Rain units<select id="rainUnits"><option value="mm" selected>mm</option><option value="in">inches</option></select></label>
@@ -168,7 +175,8 @@ function draw(){
   ctx.textAlign='left';ctx.fillStyle='#b8cbd8';ctx.fillText(timeText(rowStart),2,y+14);
   ctx.fillStyle='#7b95a9';ctx.fillText(new Date(rowStart*1000).toLocaleDateString([],{month:'short',day:'numeric'}),2,y+30);
   for(const tick of scale.ticks){
-   const yy=base-tick/ymax*plotH;ctx.strokeStyle='#294052';ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(width-right,yy);ctx.stroke();
+   // Zero line slightly emphasized: calm and dry periods sit on it.
+   const yy=base-tick/ymax*plotH;ctx.strokeStyle=tick===0?'#55788f':'#294052';ctx.lineWidth=tick===0?1.6:1;ctx.beginPath();ctx.moveTo(left,yy);ctx.lineTo(width-right,yy);ctx.stroke();ctx.lineWidth=1;
    ctx.fillStyle='#839caf';ctx.textAlign='right';ctx.fillText(WindMath.tickLabel(tick,scale.step),left-5,yy,44);
   }
   for(let j=0;j<=ticks;j++){
@@ -221,21 +229,64 @@ const rainCanvas=$('rainChart'), rctx=rainCanvas.getContext('2d');
 // Initial calibration: 2 ml per tip over a 49.5 × 109.5 mm funnel opening = 0.3690 mm/tip.
 const RAIN_DEFAULT=Number((2000/(49.5*109.5)).toPrecision(4));
 let mmPerTip=RAIN_DEFAULT, rainUnits='mm', rainCalibrated=true, rainDay=null, rainRows=[], rainKey=null, rainFetched=0, rainGen=0;
+let rainDays=1, since={kind:'none'}, sinceData=null, sinceGen=0;
 const midnight=t=>{const d=new Date(t*1000);d.setHours(0,0,0,0);return d.getTime()/1000;};
 const nextMidnight=t=>{const d=new Date(t*1000);d.setHours(24,0,0,0);return d.getTime()/1000;};
 const rainVal=mm=>rainUnits==='in'?mm/25.4:mm;
 const rainFmt=mm=>mm==null?'—':rainVal(mm).toFixed(rainUnits==='in'?3:1);
-function saveRain(){try{localStorage.setItem('rainSettings',JSON.stringify({mmPerTip,rainUnits,rainCalibrated}));}catch(e){}}
+function saveRain(){try{localStorage.setItem('rainSettings',JSON.stringify({mmPerTip,rainUnits,rainCalibrated,rainDays,since}));}catch(e){}}
 function rainLabels(){
- document.querySelector('.rainUnit').textContent=rainUnits;document.querySelector('.rainUnit2').textContent=rainUnits+'/h';
+ document.querySelector('.rainUnit').textContent=rainUnits;document.querySelector('.rainUnit2').textContent=rainUnits+'/h';document.querySelector('.rainUnit3').textContent=rainUnits;
  $('rainNote').className=rainCalibrated?'caption':'warn';
  $('rainNote').textContent=rainCalibrated?mmPerTip===RAIN_DEFAULT?`Rain calibration: ${mmPerTip} mm per tip (initial: 2 ml per tip ÷ 49.5 × 109.5 mm funnel).`:`Rain calibration: ${mmPerTip} mm per tip (set in this browser).`:`UNCALIBRATED: provisional ${mmPerTip} mm per tip. Set the gauge's mm per tip.`;
 }
 async function loadRain(){
- const gen=++rainGen, today=midnight(clock()), day=rainDay??today;
- try{const data=await get(`/api/rain?start=${day}&end=${nextMidnight(day)}`);if(gen!==rainGen)return;
+ const gen=++rainGen, days=rainDayList();
+ try{const data=await get(`/api/rain?start=${days[0]}&end=${nextMidnight(days[days.length-1])}`);if(gen!==rainGen)return;
   rainRows=data.tips;rainFetched=Date.now();drawRain();}catch(e){if(gen===rainGen)$('rainScale').textContent=`Cannot load rain: ${e.message}`;}
 }
+// Local midnights of the days shown, oldest first; the last is the selected day (today by default).
+function rainDayList(){
+ const last=rainDay??midnight(clock()), list=[last];
+ while(list.length<rainDays)list.unshift(midnight(list[0]-43200));
+ return list;
+}
+// Start of the "since" total: a fixed mark, or a rolling/calendar preset (local time).
+const SINCE_LABELS={h1:'Last 1 hour',h24:'Last 24 hours',h72:'Last 72 hours',d7:'Last 7 days',month:'Month to date',year:'Year to date',wy:'Water year (from Oct 1)'};
+function sinceStart(now){
+ if(since.kind==='fixed')return since.t;
+ if(since.kind!=='preset')return null;
+ const d=new Date(now*1000), k=since.key;
+ if(k==='h1')return now-3600; if(k==='h24')return now-86400; if(k==='h72')return now-3*86400; if(k==='d7')return now-7*86400;
+ if(k==='month')return new Date(d.getFullYear(),d.getMonth(),1).getTime()/1000;
+ if(k==='year')return new Date(d.getFullYear(),0,1).getTime()/1000;
+ if(k==='wy')return new Date(d.getMonth()>=9?d.getFullYear():d.getFullYear()-1,9,1).getTime()/1000;
+ return null;
+}
+async function loadSince(){
+ const gen=++sinceGen, now=clock(), start=sinceStart(now);
+ if(start==null||start>=now){sinceData=null;paintSince();return;}
+ try{const d=await get(`/api/rain/total?start=${start}&end=${now}`);if(gen!==sinceGen)return;sinceData=d;paintSince();}
+ catch(e){if(gen===sinceGen){$('sinceInfo').textContent=`Cannot load total: ${e.message}`;}}
+}
+function paintSince(){
+ $('sincePreset').value=since.kind==='preset'?since.key:since.kind;
+ if(since.kind==='none'){$('sinceTitle').textContent='Since mark';$('sinceTotal').textContent='—';
+  $('sinceInfo').textContent='No mark set: press Mark now, enter a date and time, or pick a preset';$('sinceWarn').textContent='';return;}
+ const start=sinceStart(clock());
+ $('sinceTitle').textContent=since.kind==='fixed'?`Since ${new Date(start*1000).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false})}`:SINCE_LABELS[since.key];
+ const d=sinceData;
+ if(!d){$('sinceTotal').textContent='—';$('sinceInfo').textContent=start>=clock()?'Mark is in the future':'Loading…';$('sinceWarn').textContent='';return;}
+ const total=d.tips*mmPerTip, hours=(d.end-d.start)/3600;
+ $('sinceTotal').textContent=rainFmt(total);
+ $('sinceInfo').textContent=`${d.tips} tip${d.tips===1?'':'s'} · ${durText(d.end-d.start)} · average ${rainFmt(total/Math.max(hours,1e-9))} ${rainUnits}/h`;
+ const warn=[], dt=t=>new Date(t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+ if(d.rain_logging_since==null||d.rain_logging_since>d.start)warn.push(d.rain_logging_since==null?'no rain logging yet':`rain logging began ${dt(d.rain_logging_since)}; nothing before that is counted`);
+ if(d.restarts.length)warn.push(`sensor restarted ${d.restarts.length}× (${d.restarts.slice(0,3).map(dt).join(', ')}${d.restarts.length>3?', …':''}): tips not yet reported before a reset are lost`);
+ if(d.gaps.length)warn.push(`no data ${d.gaps.slice(0,3).map(g=>`${dt(g.start)} for ${durText(g.end-g.start)}`).join(', ')}${d.gaps.length>3?', …':''}: tips are recovered unless the sensor restarted`);
+ $('sinceWarn').textContent=warn.length?'⚠ '+warn.join(' · '):'';
+}
+function setSince(next){since=next;sinceData=null;saveRain();paintSince();loadSince();}
 function paintRain(){
  const p=state?.latest, now=clock();
  if(!p||p.rain_tips==null){$('rainRate').textContent='—';$('rainLast').textContent='—';
@@ -250,47 +301,72 @@ function paintRain(){
  $('rainGauge').textContent=`Gauge D10 ${p.rain_pin?'open':'closed'} · ${p.rain_tips} tips since sensor start · raw D10 edges ${p.rain_raw_edges}`;
 }
 function drawRain(){
- const day=rainDay??midnight(clock()), end=nextMidnight(day), span=end-day, today=rainDay==null;
- const width=rainCanvas.clientWidth, height=200, left=60, right=16, top=14, plotH=height-top-30, plotW=width-left-right;
+ const days=rainDayList(), first=days[0], last=days[days.length-1], end=nextMidnight(last), span=end-first, today=rainDay==null;
+ const width=rainCanvas.clientWidth, height=200, left=60, right=16, top=26, plotH=height-top-30, plotW=width-left-right;
  const ratio=window.devicePixelRatio||1;rainCanvas.style.height=height+'px';rainCanvas.width=Math.round(width*ratio);rainCanvas.height=Math.round(height*ratio);rctx.setTransform(ratio,0,0,ratio,0,0);
- const rows=rainRows.filter(r=>r.t>=day&&r.t<end), hours=new Array(Math.ceil(span/3600)).fill(0);
- let tips=0;for(const r of rows){tips+=r.added;hours[Math.min(hours.length-1,Math.floor((r.t-day)/3600))]+=r.added;}
- const total=tips*mmPerTip, scale=WindMath.niceScale(Math.max(rainVal(total),rainVal(mmPerTip))*1.1,4,false), ymax=scale.max;
- const X=t=>left+(t-day)/span*plotW, Y=mm=>top+plotH-rainVal(mm)/ymax*plotH;
+ const bounds=days.map((d,i)=>[d,i+1<days.length?days[i+1]:end]);
+ const rows=rainRows.filter(r=>r.t>=first&&r.t<end), hours=new Array(Math.ceil(span/3600)).fill(0), dayTips=days.map(()=>0);
+ for(const r of rows){hours[Math.min(hours.length-1,Math.floor((r.t-first)/3600))]+=r.added;dayTips[bounds.findIndex(([a,b])=>r.t>=a&&r.t<b)]+=r.added;}
+ const peak=Math.max(...dayTips)*mmPerTip, scale=WindMath.niceScale(Math.max(rainVal(peak),rainVal(mmPerTip))*1.1,4,false), ymax=scale.max;
+ const X=t=>left+(t-first)/span*plotW, Y=mm=>top+plotH-rainVal(mm)/ymax*plotH;
  rctx.fillStyle='#101e2b';rctx.fillRect(0,0,width,height);rctx.font='11px system-ui';rctx.textBaseline='middle';
- for(const tick of scale.ticks){const y=Y(rainUnits==='in'?tick*25.4:tick);rctx.strokeStyle='#294052';rctx.beginPath();rctx.moveTo(left,y);rctx.lineTo(width-right,y);rctx.stroke();
+ for(const tick of scale.ticks){const y=Y(rainUnits==='in'?tick*25.4:tick);rctx.strokeStyle=tick===0?'#55788f':'#294052';rctx.lineWidth=tick===0?1.6:1;rctx.beginPath();rctx.moveTo(left,y);rctx.lineTo(width-right,y);rctx.stroke();rctx.lineWidth=1;
   rctx.fillStyle='#839caf';rctx.textAlign='right';rctx.fillText(WindMath.tickLabel(tick,scale.step),left-5,y);}
- const step=width<550?6:3;
- for(let h=0;h<=24;h+=step){const t=Math.min(end,day+h*3600),x=X(t);rctx.strokeStyle='#223746';rctx.beginPath();rctx.moveTo(x,top);rctx.lineTo(x,top+plotH);rctx.stroke();
-  rctx.fillStyle='#839caf';rctx.textAlign=h===0?'left':h===24?'right':'center';rctx.fillText(h===24?'24:00':new Date(t*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false}),x,top+plotH+16);}
+ // Hour ticks: 3 h for one day, 6 h for two, 12 h for more (6/12/24 h on narrow screens).
+ const step=(rainDays===1?3:rainDays===2?6:12)*(width<550?2:1);
+ bounds.forEach(([a,b],i)=>{
+  for(let h=0;a+h*3600<b;h+=step){const t=a+h*3600,x=X(t);rctx.strokeStyle=h===0?'#4a6b84':'#223746';rctx.beginPath();rctx.moveTo(x,top);rctx.lineTo(x,top+plotH);rctx.stroke();
+   if(h===0&&i===0)continue;rctx.fillStyle='#839caf';rctx.textAlign='center';rctx.fillText(h===0?new Date(t*1000).toLocaleDateString([],{month:'short',day:'numeric'}):new Date(t*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',hour12:false}),x,top+plotH+16);}
+  rctx.fillStyle='#b8cbd8';rctx.textAlign='left';
+  rctx.fillText(`${new Date(a*1000).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'})} · ${rainFmt(dayTips[i]*mmPerTip)} ${rainUnits}`,X(a)+4,top-12,X(b)-X(a)-8);
+ });
+ rctx.fillStyle='#839caf';rctx.textAlign='left';rctx.fillText('00:00',X(first),top+plotH+16);rctx.textAlign='right';rctx.fillText('24:00',X(end),top+plotH+16);
  rctx.fillStyle='rgba(120,169,198,.35)';
- hours.forEach((n,h)=>{if(!n)return;const x0=X(day+h*3600),x1=X(Math.min(end,day+(h+1)*3600)),y=Y(n*mmPerTip);rctx.fillRect(x0+1,y,Math.max(1,x1-x0-2),top+plotH-y);});
- const stop=today?Math.min(end,clock()):end;let cum=0,x=X(day),y=Y(0);
- rctx.strokeStyle='#6cb8ff';rctx.lineWidth=2;rctx.beginPath();rctx.moveTo(x,y);
- for(const r of rows){const nx=X(r.t);rctx.lineTo(nx,y);cum+=r.added*mmPerTip;y=Y(cum);rctx.lineTo(nx,y);}
- rctx.lineTo(X(stop),y);rctx.stroke();rctx.lineWidth=1;
- if(today){const nx=X(clock());rctx.strokeStyle='#e4b26c';rctx.setLineDash([3,4]);rctx.beginPath();rctx.moveTo(nx,top);rctx.lineTo(nx,top+plotH);rctx.stroke();rctx.setLineDash([]);}
- $('rainTotal').textContent=rainFmt(total);
- $('rainTips').textContent=`${tips} tip${tips===1?'':'s'} × ${mmPerTip} mm${today?' · so far today':''}`;
- $('rainDayText').textContent=today?'today':new Date(day*1000).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric',year:'numeric'});
- $('rainScale').textContent=`${new Date(day*1000).toLocaleDateString()} 00:00 — 24:00 local · max hour ${rainFmt(Math.max(0,...hours)*mmPerTip)} ${rainUnits}`;
+ hours.forEach((n,h)=>{if(!n)return;const x0=X(first+h*3600),x1=X(Math.min(end,first+(h+1)*3600)),y=Y(n*mmPerTip);rctx.fillRect(x0+1,y,Math.max(1,x1-x0-2),top+plotH-y);});
+ // Each day's line starts from 0 at its midnight.
+ const now=clock();rctx.strokeStyle='#6cb8ff';rctx.lineWidth=2;
+ bounds.forEach(([a,b])=>{
+  if(a>now)return;const stop=Math.min(b,now);let cum=0,y=Y(0);
+  rctx.beginPath();rctx.moveTo(X(a),y);
+  for(const r of rows){if(r.t<a||r.t>=b)continue;const nx=X(r.t);rctx.lineTo(nx,y);cum+=r.added*mmPerTip;y=Y(cum);rctx.lineTo(nx,y);}
+  rctx.lineTo(X(stop),y);rctx.stroke();
+ });
+ rctx.lineWidth=1;
+ if(now>=first&&now<end){const nx=X(now);rctx.strokeStyle='#e4b26c';rctx.setLineDash([3,4]);rctx.beginPath();rctx.moveTo(nx,top);rctx.lineTo(nx,top+plotH);rctx.stroke();rctx.setLineDash([]);}
+ const lastTips=dayTips[dayTips.length-1];
+ $('rainTotal').textContent=rainFmt(lastTips*mmPerTip);
+ $('rainTips').textContent=`${lastTips} tip${lastTips===1?'':'s'} × ${mmPerTip} mm${today?' · so far today':` · ${new Date(last*1000).toLocaleDateString([],{month:'short',day:'numeric'})}`}`;
+ const dayName=t=>new Date(t*1000).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'});
+ $('rainDayText').textContent=rainDays===1?(today?'today':dayName(last)):`${dayName(first)} – ${today?'today':dayName(last)}`;
+ $('rainScale').textContent=`${rainDays} day${rainDays>1?'s':''} · local time · max hour ${rainFmt(Math.max(0,...hours)*mmPerTip)} ${rainUnits}`;
  $('rainToday').className=today?'active':'';
 }
 function rainTick(){
  if(!state)return;paintRain();
  const key=`${state.latest?.rain_tips}|${midnight(clock())}`;
- if(key!==rainKey||Date.now()-rainFetched>60000){rainKey=key;loadRain();}else drawRain();
+ if(key!==rainKey||Date.now()-rainFetched>60000){rainKey=key;loadRain();loadSince();}else drawRain();
 }
 $('rainOlder').onclick=()=>{rainDay=midnight((rainDay??midnight(clock()))-43200);loadRain();};
 $('rainNewer').onclick=()=>{const next=nextMidnight((rainDay??midnight(clock()))+43200);rainDay=next>=midnight(clock())?null:midnight(next+3600);loadRain();};
 $('rainToday').onclick=()=>{rainDay=null;loadRain();};
+$('rainDays').addEventListener('change',()=>{rainDays=Number($('rainDays').value);saveRain();loadRain();});
+$('markNow').onclick=()=>setSince({kind:'fixed',t:clock()});
+$('sinceSet').onclick=()=>{const v=$('sinceAt').value;if(!v){$('sinceAt').reportValidity();return;}
+ const t=new Date(v).getTime()/1000;if(!Number.isFinite(t))return;setSince({kind:'fixed',t});};
+$('sinceClear').onclick=()=>setSince({kind:'none'});
+$('sincePreset').addEventListener('change',()=>{const v=$('sincePreset').value;
+ if(v==='none')setSince({kind:'none'});else if(v==='fixed'){if(since.kind!=='fixed')setSince({kind:'fixed',t:clock()});}else setSince({kind:'preset',key:v});});
 $('applyRain').onclick=()=>{if(!$('mmPerTip').checkValidity()){$('mmPerTip').reportValidity();return;}
- mmPerTip=Number($('mmPerTip').value);rainUnits=$('rainUnits').value;rainCalibrated=true;saveRain();rainLabels();paintRain();drawRain();};
-$('rainUnits').addEventListener('change',()=>{rainUnits=$('rainUnits').value;saveRain();rainLabels();paintRain();drawRain();});
+ mmPerTip=Number($('mmPerTip').value);rainUnits=$('rainUnits').value;rainCalibrated=true;saveRain();rainLabels();paintRain();drawRain();paintSince();};
+$('rainUnits').addEventListener('change',()=>{rainUnits=$('rainUnits').value;saveRain();rainLabels();paintRain();drawRain();paintSince();});
 try{const r=JSON.parse(localStorage.getItem('rainSettings'));
  if(r){if(r.rainCalibrated===true&&Number.isFinite(r.mmPerTip)&&r.mmPerTip>0&&r.mmPerTip<=1000){mmPerTip=r.mmPerTip;rainCalibrated=true;}
-  if(['mm','in'].includes(r.rainUnits))rainUnits=r.rainUnits;}}catch(e){}
-$('mmPerTip').value=mmPerTip;$('rainUnits').value=rainUnits;rainLabels();
+  if(['mm','in'].includes(r.rainUnits))rainUnits=r.rainUnits;
+  if([1,2,3,4].includes(r.rainDays))rainDays=r.rainDays;
+  const sv=r.since;
+  if(sv&&sv.kind==='fixed'&&Number.isFinite(sv.t))since={kind:'fixed',t:sv.t};
+  else if(sv&&sv.kind==='preset'&&Object.hasOwn(SINCE_LABELS,sv.key))since={kind:'preset',key:sv.key};}}catch(e){}
+$('mmPerTip').value=mmPerTip;$('rainUnits').value=rainUnits;$('rainDays').value=String(rainDays);rainLabels();paintSince();
 new ResizeObserver(drawRain).observe(rainCanvas.parentElement);
 async function poll(){
  try{

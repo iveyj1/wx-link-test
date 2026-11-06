@@ -73,9 +73,11 @@ Serves `http://<host>:8765/` on all interfaces, read-only, **without authenticat
 | `samples` | One row per completed revolution received (graph points) | 7 days |
 | `packets` | Every packet, heartbeats included: link continuity, reed and clock diagnostics | 7 days |
 | `rain` | One row per packet whose tip count rose (`added` new tips) | 400 days |
+| `runs` | One row per sensor run (session, version, first/last packet): restart warnings | 400 days |
+| `gaps` | Stretches of more than 1 h without packets | 400 days |
 | `state` | Latest decoded packet | — |
 
-API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bucket=<s>&calm=20`, condensed, ≤ 12 days), `/api/rain?start=&end=` (≤ 32 days). No `sqlite3` CLI is installed here; query with Python.
+API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bucket=<s>&calm=20`, condensed, ≤ 12 days), `/api/rain?start=&end=` (≤ 32 days), `/api/rain/total?start=&end=` (tip sum with restarts, gaps and rain-logging start). No `sqlite3` CLI is installed here; query with Python.
 
 ## Measurement design
 
@@ -88,6 +90,8 @@ API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bu
 ### Rain
 * Each debounced D10 closure is one tip; the reopening is ignored. The default calibration is **0.3690 mm/tip**: 2 ml per tip over a 49.5 × 109.5 mm funnel (2000 mm³ ÷ 5420.25 mm²). Check it by pouring a known volume (100 ml ≈ 50 tips ≈ 18.4 mm).
 * The dashboard shows the total from local midnight to midnight, hourly bars, and rate = mm/tip ÷ max(last tip interval, time since last tip). That rate decays during dry spells and shows 0 after 1 h without a tip.
+* The chart shows 1–4 days; each day's line restarts from 0 at local midnight, with the day's total above it.
+* **Total since a mark** (per browser): **Mark now** (like emptying a manual gauge), a date and time, or a preset (last 1 h/24 h/72 h/7 days, month, year, water year from Oct 1). The card warns when the total is incomplete: tips not yet reported before a **sensor restart** are lost; **data gaps** over 1 h are harmless within one sensor run, because counts are cumulative; and nothing is counted before rain logging began.
 
 ### Reporting and packets
 * A completed revolution or a rain tip triggers a report immediately, limited to one send per second (from completion), with a 5 s backoff after a failure and a 60 s heartbeat otherwise. Events during the cooldown are coalesced.
