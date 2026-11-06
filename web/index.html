@@ -68,7 +68,12 @@ const CALM_S=20; // no reed closure for this long = deduced calm, drawn as 0 (di
 const itemValue=it=>it.calm?0:valueOf(it.hz);
 const durText=s=>s<60?`${Math.round(s)} s`:s<3600?`${Math.floor(s/60)} m ${Math.round(s%60)} s`:`${Math.floor(s/3600)} h ${Math.round(s%3600/60)} m`;
 const unitLabel=()=>WindMath.labels[units];
-const compact=v=>Number(v.toPrecision(4)).toString();
+// Display precision: wind speed 0.01, RPM 0.1, Hz 0.001 (period 0.01 s, A/B 0.001 s, rain 0.1 mm).
+const unitDec=()=>({hz:3,rpm:1})[units]??2;
+// Big card numbers: pad with figure spaces (one digit wide, like the tabular digits) to a fixed
+// number of integer digits, so the decimal point stays put as values change.
+const FIG='\u2007';
+const pad=(v,d,int)=>{if(v==null||!Number.isFinite(Number(v)))return '—';const t=Number(v).toFixed(d),w=int+(d?d+1:0);return t.length<w?FIG.repeat(w-t.length)+t:t;};
 function saveSettings(){try{localStorage.setItem('windSettings',JSON.stringify({duration,rows,stripHeight,units,gain,calOffset,calibrated,ymax:$('ymax').value}));}catch(e){}}
 function displayLabels(){
  const wind=!['hz','rpm'].includes(units);
@@ -132,15 +137,15 @@ function paintMetrics(){
  $('status').textContent=text;$('status').className='status '+(good?'ok':'warn');
  if(calmFrom!=null){
   // Same argument as the graph: no closure for over CALM_S s means < 0.5 rev / CALM_S, shown as 0.
-  $('hz').textContent=fmt(0,units==='hz'?4:2);$('rpm').textContent=fmt(0,2);
-  $('period').textContent=`> ${Math.round(age??quiet)}`;
+  $('hz').textContent=pad(0,unitDec(),3);$('rpm').textContent=pad(0,1,3);
+  const lb=pad(age??quiet,2,3);$('period').textContent='>'+(lb.startsWith(FIG)?lb.slice(1):lb);
   $('pair').textContent=`no reed closure for ${durText(quiet)}`;
   $('hz').style.opacity='1';
   $('freshness').textContent=`Deduced calm (no closure for over ${CALM_S} s) · last revolution ${durText(age??quiet)} ago`;
  } else {
- $('hz').textContent=fmt(valueOf(p?.hz),units==='hz'?4:2);$('rpm').textContent=fmt(p?.hz==null?null:60*p.hz,2);
- $('period').textContent=p?.hz==null?'—':fmt(p.period_s,4);
- $('pair').textContent=`A ${p?.hz==null?'—':fmt(p.a_s,4)+' s'} · B ${p?.hz==null?'—':fmt(p.b_s,4)+' s'}`;
+ $('hz').textContent=pad(valueOf(p?.hz),unitDec(),3);$('rpm').textContent=pad(p?.hz==null?null:60*p.hz,1,3);
+ $('period').textContent=p?.hz==null?'—':pad(p.period_s,2,3);
+ $('pair').textContent=`A ${p?.hz==null?'—':fmt(p.a_s,3)+' s'} · B ${p?.hz==null?'—':fmt(p.b_s,3)+' s'}`;
  $('hz').style.opacity=good?'1':'.5';
  $('freshness').textContent=age==null?'First accepted edge is reference; third completes a revolution':`${good?'Latest':'Last known'} measurement · ${age.toFixed(1)} s old`;
  }
@@ -198,7 +203,7 @@ function draw(){
    if(o>0)tw=tw?{avg:tw.avg*tw.covered/(tw.covered+o),covered:tw.covered+o,calm:tw.calm+o,count:tw.count}:{avg:0,covered:o,calm:o,count:0};
   } else tw=WindMath.timeAverage(spans,rowStart,rowStart+duration,valueOf);
   const n=condensed()?(tw?tw.count:0):(real?real.count:0);
-  const lines=tw?[['max',`${compact(real?real.max:0)} ${unitLabel()}`],['avg',compact(tw.avg)],['min',compact(tw.calm>0?0:real?real.min:0)],['n',String(n)]].concat(tw.calm>=1?[['calm',durText(tw.calm)]]:[]):[['','no data']];
+  const lines=tw?[['max',`${(real?real.max:0).toFixed(unitDec())} ${unitLabel()}`],['avg',tw.avg.toFixed(unitDec())],['min',(tw.calm>0?0:real?real.min:0).toFixed(unitDec())],['n',String(n)]].concat(tw.calm>=1?[['calm',durText(tw.calm)]]:[]):[['','no data']];
   ctx.font='11px system-ui';
   lines.forEach(([k,v],i)=>{const yy=y+14+i*15;if(yy>y+stripH-6)return;
    ctx.textAlign='left';ctx.fillStyle='#7b95a9';ctx.fillText(k,width-right+10,yy);
@@ -234,6 +239,7 @@ const midnight=t=>{const d=new Date(t*1000);d.setHours(0,0,0,0);return d.getTime
 const nextMidnight=t=>{const d=new Date(t*1000);d.setHours(24,0,0,0);return d.getTime()/1000;};
 const rainVal=mm=>rainUnits==='in'?mm/25.4:mm;
 const rainFmt=mm=>mm==null?'—':rainVal(mm).toFixed(rainUnits==='in'?3:1);
+const rainPad=(mm,int)=>mm==null?'—':pad(rainVal(mm),rainUnits==='in'?3:1,int);
 function saveRain(){try{localStorage.setItem('rainSettings',JSON.stringify({mmPerTip,rainUnits,rainCalibrated,rainDays,since}));}catch(e){}}
 function rainLabels(){
  document.querySelector('.rainUnit').textContent=rainUnits;document.querySelector('.rainUnit2').textContent=rainUnits+'/h';document.querySelector('.rainUnit3').textContent=rainUnits;
@@ -278,7 +284,7 @@ function paintSince(){
  const d=sinceData;
  if(!d){$('sinceTotal').textContent='—';$('sinceInfo').textContent=start>=clock()?'Mark is in the future':'Loading…';$('sinceWarn').textContent='';return;}
  const total=d.tips*mmPerTip, hours=(d.end-d.start)/3600;
- $('sinceTotal').textContent=rainFmt(total);
+ $('sinceTotal').textContent=rainPad(total,4);
  $('sinceInfo').textContent=`${d.tips} tip${d.tips===1?'':'s'} · ${durText(d.end-d.start)} · average ${rainFmt(total/Math.max(hours,1e-9))} ${rainUnits}/h`;
  const warn=[], dt=t=>new Date(t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
  if(d.rain_logging_since==null||d.rain_logging_since>d.start)warn.push(d.rain_logging_since==null?'no rain logging yet':`rain logging began ${dt(d.rain_logging_since)}; nothing before that is counted`);
@@ -296,7 +302,7 @@ function paintRain(){
  let rate=null,note='needs two tips since sensor start';
  if(age!=null&&age>3600){rate=0;note='no tip for over 1 h';}
  else if(p.rain_interval_s){rate=mmPerTip*3600/Math.max(p.rain_interval_s,age);note=age>p.rain_interval_s?'decaying: no tip since; upper bound':'from the last two tips';}
- $('rainRate').textContent=rate==null?'—':rainVal(rate).toFixed(rainUnits==='in'?3:1);$('rainRateNote').textContent=note;
+ $('rainRate').textContent=rate==null?'—':rainPad(rate,3);$('rainRateNote').textContent=note;
  $('rainLast').textContent=p.rain_at==null?'none since start':`${timeText(p.rain_at)} · ${age<120?age.toFixed(0)+' s':age<7200?(age/60).toFixed(0)+' min':(age/3600).toFixed(1)+' h'} ago`;
  $('rainGauge').textContent=`Gauge D10 ${p.rain_pin?'open':'closed'} · ${p.rain_tips} tips since sensor start · raw D10 edges ${p.rain_raw_edges}`;
 }
@@ -334,7 +340,7 @@ function drawRain(){
  rctx.lineWidth=1;
  if(now>=first&&now<end){const nx=X(now);rctx.strokeStyle='#e4b26c';rctx.setLineDash([3,4]);rctx.beginPath();rctx.moveTo(nx,top);rctx.lineTo(nx,top+plotH);rctx.stroke();rctx.setLineDash([]);}
  const lastTips=dayTips[dayTips.length-1];
- $('rainTotal').textContent=rainFmt(lastTips*mmPerTip);
+ $('rainTotal').textContent=rainPad(lastTips*mmPerTip,3);
  $('rainTips').textContent=`${lastTips} tip${lastTips===1?'':'s'} × ${mmPerTip} mm${today?' · so far today':` · ${new Date(last*1000).toLocaleDateString([],{month:'short',day:'numeric'})}`}`;
  const dayName=t=>new Date(t*1000).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'});
  $('rainDayText').textContent=rainDays===1?(today?'today':dayName(last)):`${dayName(first)} – ${today?'today':dayName(last)}`;
@@ -400,7 +406,7 @@ canvas.addEventListener('pointermove',e=>{
  const t=rowStart+(x-g.left)/g.plotWidth*duration;
  let best=null,dist=Infinity;for(const p of g.items){if(p.t<rowStart||p.t>=rowStart+duration)continue;const d=Math.abs(p.t-t);if(d<dist){best=p;dist=d;}}
  if(!best||dist>duration*12/g.plotWidth){$('tooltip').style.display='none';return;}
- $('tooltip').textContent=best.calm?`${dateText(best.t)}\nDeduced calm: 0 ${unitLabel()}\nNo reed closure for over ${CALM_S} s${best.provisional?' (provisional, live)':''}\nDisplay only; not a measurement`:`${dateText(best.t)}\n${valueOf(best.hz).toFixed(4)} ${unitLabel()}${!calibrated&&!['hz','rpm'].includes(units)?' (uncalibrated)':''} · ${best.hz.toFixed(4)} Hz\nPeriod ${best.period.toFixed(5)} s\nA ${best.a.toFixed(5)} s · B ${best.b.toFixed(5)} s\nRevolution ${best.revs}`;
+ $('tooltip').textContent=best.calm?`${dateText(best.t)}\nDeduced calm: 0 ${unitLabel()}\nNo reed closure for over ${CALM_S} s${best.provisional?' (provisional, live)':''}\nDisplay only; not a measurement`:`${dateText(best.t)}\n${valueOf(best.hz).toFixed(unitDec())} ${unitLabel()}${!calibrated&&!['hz','rpm'].includes(units)?' (uncalibrated)':''} · ${best.hz.toFixed(3)} Hz\nPeriod ${best.period.toFixed(2)} s\nA ${best.a.toFixed(3)} s · B ${best.b.toFixed(3)} s\nRevolution ${best.revs}`;
  $('tooltip').style.display='block';$('tooltip').style.left=Math.max(0,Math.min(e.clientX+12,innerWidth-280))+'px';$('tooltip').style.top=Math.max(0,Math.min(e.clientY+12,innerHeight-140))+'px';
 });canvas.addEventListener('pointerleave',()=>$('tooltip').style.display='none');
 try{
