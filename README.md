@@ -2,7 +2,7 @@
 
 A battery sensor counts anemometer and tipping-bucket rain-gauge reed closures and reports them over LoRa. A USB-attached receiver forwards packets to a host, which records them in SQLite and serves a live LAN dashboard.
 
-The sensor runs firmware **W5-rain2**; **W6-vbat1** (adds battery voltage) is built and tested but not yet flashed. The receiver runs the same sketch built with `SENSOR=0`.
+The sensor runs firmware **W6-vbat1** (W5 plus battery voltage; flashed 2026-11-06). The receiver runs the same sketch built with `SENSOR=0`.
 
 ## Hardware
 
