@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parent
 RETENTION = 7 * 86400
 RAIN_RETENTION = 400 * 86400  # rain rows are tiny; keep over a year of daily totals
 GAP = 3600  # no packet for this long is recorded as a data gap
+WEATHER_STEP = 60  # seconds between stored barometer rows (the sensor reads every 30 s)
+VERSIONS = ('W2', 'W3', 'W4', 'W5', 'W6', 'W7')
 # Maintenance windows (takedown, bench tests): data is still recorded, but graphs and rain
 # totals leave out samples whose revolution overlaps a window and tips inside one.
 # end NULL = in progress.
@@ -62,6 +64,10 @@ class Store:
             session TEXT PRIMARY KEY, version TEXT NOT NULL, first_t REAL NOT NULL, last_t REAL NOT NULL);
           CREATE TABLE IF NOT EXISTS gaps (start REAL NOT NULL, end REAL NOT NULL);
           CREATE INDEX IF NOT EXISTS gap_time ON gaps(start);
+          -- Barometer (W7+): at most one row per WEATHER_STEP s, kept like rain (packets last 7 days).
+          -- Pressure is station pressure in Pa; temperature is inside the sensor enclosure.
+          CREATE TABLE IF NOT EXISTS weather (t REAL NOT NULL, pressure_pa INTEGER NOT NULL, temp_c REAL NOT NULL);
+          CREATE INDEX IF NOT EXISTS weather_time ON weather(t);
           CREATE TABLE IF NOT EXISTS maintenance (
             id INTEGER PRIMARY KEY AUTOINCREMENT, start REAL NOT NULL, end REAL, note TEXT NOT NULL DEFAULT '');
         ''')
@@ -73,6 +79,12 @@ class Store:
         if 'vbat_mv' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
             # W6: battery millivolts (about 4.2 V while charging on USB). NULL before W6.
             self.db.execute('ALTER TABLE packets ADD COLUMN vbat_mv INTEGER')
+        if 'pressure_pa' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
+            # W7: BMP180 station pressure (Pa) and enclosure temperature (deg C). NULL = none.
+            self.db.execute('ALTER TABLE packets ADD COLUMN pressure_pa INTEGER')
+            self.db.execute('ALTER TABLE packets ADD COLUMN temp_c REAL')
+        last = self.db.execute('SELECT MAX(t) FROM weather').fetchone()[0]
+        self.last_weather = last or 0
         row = self.db.execute("SELECT value FROM state WHERE key='latest'").fetchone()
         self.latest = json.loads(row[0]) if row else None
         self.connected = False
@@ -99,7 +111,7 @@ class Store:
 
     def accept(self, packet, received=None):
         received = time.time() if received is None else received
-        if packet['version'] not in ('W2', 'W3', 'W4', 'W5', 'W6'):
+        if packet['version'] not in VERSIONS:
             with self.lock:
                 self.error = 'Legacy W1 firmware: full-revolution frequency unavailable'
             return
@@ -124,7 +136,10 @@ class Store:
             self.db.execute('INSERT INTO runs VALUES(?,?,?,?) ON CONFLICT(session) DO UPDATE SET '
                             'last_t=excluded.last_t, version=excluded.version',
                             (packet['session'], packet['version'], received, received))
-            w3 = packet['version'] in ('W3', 'W4', 'W5', 'W6')
+            w3 = packet['version'] in VERSIONS[1:]
+            if packet.get('pressure_pa') and received - self.last_weather >= WEATHER_STEP:
+                self.db.execute('INSERT INTO weather VALUES(?,?,?)', (received, packet['pressure_pa'], packet['temp_c']))
+                self.last_weather = received
             latest['vbat_v'] = packet['vbat_mv'] / 1000 if 'vbat_mv' in packet else None
             if 'rain_tips' in packet:
                 tips = packet['rain_tips']
@@ -144,12 +159,14 @@ class Store:
             if w3:
                 latest['raw_edges'] = str(packet['raw_edges'])
                 latest['pin_age_s'] = None if packet['pin_age'] == UNKNOWN else packet['pin_age'] / HZ
-            self.db.execute('INSERT INTO packets(t,version,session,seq,pulses,revs,uptime,pin,pin_age,raw_edges,rssi,snr,clock,vbat_mv) '
-                            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            self.db.execute('INSERT INTO packets(t,version,session,seq,pulses,revs,uptime,pin,pin_age,raw_edges,rssi,snr,clock,vbat_mv,'
+                            'pressure_pa,temp_c) '
+                            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                             (received, packet['version'], packet['session'], packet['seq'], latest['count'],
                              latest['revolutions'], str(packet['uptime']), packet['pin'] if w3 else None,
                              str(packet['pin_age']) if w3 else None, latest['raw_edges'] if w3 else None,
-                             packet['rssi'], packet['snr'], packet.get('clock'), packet.get('vbat_mv')))
+                             packet['rssi'], packet['snr'], packet.get('clock'), packet.get('vbat_mv'),
+                             packet.get('pressure_pa'), packet.get('temp_c')))
             new_measurement = period > 0 and (restart or latest['revolutions'] != old['revolutions'])
             if new_measurement:
                 self.db.execute('INSERT INTO samples(t,stream,hz,period,a,b,imbalance,revs,pulses) VALUES(?,?,?,?,?,?,?,?,?)',
@@ -165,6 +182,7 @@ class Store:
                 self.db.execute('DELETE FROM samples WHERE t < ?', (received - RETENTION,))
                 self.db.execute('DELETE FROM packets WHERE t < ?', (received - RETENTION,))
                 self.db.execute('DELETE FROM rain WHERE t < ?', (received - RAIN_RETENTION,))
+                self.db.execute('DELETE FROM weather WHERE t < ?', (received - RAIN_RETENTION,))
                 self.db.execute('DELETE FROM runs WHERE last_t < ?', (received - RAIN_RETENTION,))
                 self.db.execute('DELETE FROM gaps WHERE end < ?', (received - RAIN_RETENTION,))
                 self.last_prune = received
@@ -259,6 +277,17 @@ class Store:
                 'SELECT :s + CAST((t - :s) / :b AS INTEGER) * :b AS t0, AVG(vbat_mv) AS mv, MIN(vbat_mv) AS lo, '
                 'MAX(vbat_mv) AS hi, COUNT(*) AS n FROM packets WHERE t >= :s AND t < :e AND vbat_mv IS NOT NULL '
                 'GROUP BY t0 ORDER BY t0', dict(s=start, e=end, b=bucket)).fetchall()
+            return dict(start=start, end=end, bucket=bucket, points=[dict(r) for r in rows], now=time.time())
+
+    def weather(self, start, end, bucket):
+        """Pressure (Pa) and enclosure temperature per time bucket: mean, min, max. Maintenance
+        windows are left out (handling and bench tests change both)."""
+        with self.lock:
+            rows = self.db.execute(
+                'SELECT :s + CAST((t - :s) / :b AS INTEGER) * :b AS t0, AVG(pressure_pa) AS p, MIN(pressure_pa) AS plo, '
+                'MAX(pressure_pa) AS phi, AVG(temp_c) AS c, MIN(temp_c) AS clo, MAX(temp_c) AS chi, COUNT(*) AS n '
+                f'FROM weather WHERE t >= :s AND t < :e AND {TIP_OK} GROUP BY t0 ORDER BY t0',
+                dict(s=start, e=end, b=bucket)).fetchall()
             return dict(start=start, end=end, bucket=bucket, points=[dict(r) for r in rows], now=time.time())
 
     def rain_total(self, start, end):
@@ -374,6 +403,14 @@ def handler_for(store):
                         raise ValueError('battery range must be positive and at most 8 days')
                     bucket = max(60.0, (end - start) / 720)
                     body = json.dumps(store.battery(start, end, bucket), allow_nan=False).encode()
+                    kind = 'application/json'
+                elif url.path == '/api/weather':
+                    params = parse_qs(url.query)
+                    end = float(params.get('end', [str(time.time())])[0])
+                    start = float(params.get('start', [str(end - 86400)])[0])
+                    if not all(map(math.isfinite, (start, end))) or not 0 < end - start <= 32 * 86400:
+                        raise ValueError('weather range must be positive and at most 32 days')
+                    body = json.dumps(store.weather(start, end, max(60.0, (end - start) / 720)), allow_nan=False).encode()
                     kind = 'application/json'
                 elif url.path == '/api/rain/total':
                     params = parse_qs(url.query)

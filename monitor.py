@@ -29,13 +29,20 @@ def decode(line):
         raise ValueError('unexpected frame')
     fields = payload.split(',')
     version, session, seq = fields[:3]
-    if version in ('W5', 'W6'):
+    if version in ('W5', 'W6', 'W7'):
         # All numbers hex; revolutions and period are derived (see link.ino report()).
-        # W6 = W5 + battery millivolts.
-        if len(fields) != (18 if version == 'W5' else 19) or not re.fullmatch(r'[0-9a-f]{8}', session):
+        # W6 = W5 + battery millivolts. W7 = W6 + pressure (Pa) and temperature (0.1 K), 0 = none.
+        if len(fields) != {'W5': 18, 'W6': 19, 'W7': 21}[version] or not re.fullmatch(r'[0-9a-f]{8}', session):
             raise ValueError(f'invalid {version} frame')
-        vbat = None
-        if version == 'W6':
+        vbat = baro = None
+        if version == 'W7':
+            *fields, pressure, temp = fields
+            pressure, temp = hex64(pressure), hex64(temp)
+            if (pressure == 0) != (temp == 0) or pressure > 110000 or temp > 0xfff or (
+                    pressure and not (30000 <= pressure and 2232 <= temp <= 3582)):
+                raise ValueError('invalid barometer fields')
+            baro = (pressure, temp)
+        if version in ('W6', 'W7'):
             *fields, vbat = fields
             vbat = hex64(vbat)
             if vbat > 0xffff:
@@ -53,6 +60,9 @@ def decode(line):
                      rain_age=hex64(tip_age), rain_pin=int(rain_pin), rain_raw_edges=hex64(rain_raw))
         if vbat is not None:
             extra['vbat_mv'] = vbat
+        if baro is not None:
+            extra['pressure_pa'] = baro[0] or None
+            extra['temp_c'] = (baro[1] - 2732) / 10 if baro[1] else None
         if extra['rain_raw_edges'] < extra['rain_tips']:
             raise ValueError('fewer rain raw edges than tips')
         if (extra['rain_age'] == UNKNOWN) != (extra['rain_tips'] == 0) or (
@@ -85,18 +95,18 @@ def decode(line):
     data = dict(version=version, session=session, seq=int(seq), count=int(count),
                 period=int(period), age=int(age), uptime=int(uptime),
                 rssi=int(rssi), snr=int(snr), **extra)
-    if version in ('W4', 'W5', 'W6'):
+    if version in ('W4', 'W5', 'W6', 'W7'):
         data['clock'] = int(clock)  # 0 = crystal, 1 = internal fallback (less accurate timing)
     values = [data[k] for k in ('count', 'period', 'age', 'uptime')]
-    if version in ('W2', 'W3', 'W4', 'W5', 'W6'):
-        values += [extra[k] for k in extra]
+    if version in ('W2', 'W3', 'W4', 'W5', 'W6', 'W7'):
+        values += [v for k, v in extra.items() if k not in ('pressure_pa', 'temp_c')]
         if extra['revolutions'] != max(0, (data['count'] - 1) // 2):
             raise ValueError('inconsistent revolution count')
         if data['period'] != extra['interval_a'] + extra['interval_b']:
             raise ValueError('inconsistent paired period')
         if bool(extra['revolutions']) != bool(data['period']):
             raise ValueError('inconsistent period validity')
-    if version in ('W3', 'W4', 'W5', 'W6') and extra['raw_edges'] < data['count']:
+    if version in ('W3', 'W4', 'W5', 'W6', 'W7') and extra['raw_edges'] < data['count']:
         raise ValueError('fewer raw edges than counted pulses')
     if any(not 0 <= value <= UNKNOWN for value in values):
         raise ValueError('invalid unsigned value')
@@ -130,7 +140,7 @@ def format_measurement(data):
 
 def reed_state(data):
     """W3 raw D5 diagnostics; empty for W2. D5 is active-low with a pull-up: 1 = open."""
-    if data['version'] not in ('W3', 'W4', 'W5', 'W6'):
+    if data['version'] not in ('W3', 'W4', 'W5', 'W6', 'W7'):
         return ''
     level = 'open(high)' if data['pin'] else 'closed(low)'
     clock = 'CLOCK=INTERNAL_FALLBACK(timing less accurate) ' if data.get('clock') else ''
@@ -142,6 +152,8 @@ def reed_state(data):
                  f"rain_raw_edges={data['rain_raw_edges']} ")
     if 'vbat_mv' in data:
         text += f"VBAT={data['vbat_mv'] / 1000:.3f}V "
+    if data.get('pressure_pa'):
+        text += f"P={data['pressure_pa'] / 100:.2f}hPa T={data['temp_c']:.1f}C "
     return text
 
 

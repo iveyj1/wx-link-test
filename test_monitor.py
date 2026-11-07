@@ -81,6 +81,26 @@ class MonitorTests(unittest.TestCase):
         self.assertLessEqual(len(worst), 240)
         self.assertLessEqual(len(f'+RCV=1,{len(worst)},{worst},-120,-20'), 255)  # receiver line buffer
 
+    def test_w7_barometer(self):
+        base = 'W7,abcd1234,2,3,2000,6000,148,148,186a0,1,ffffffffffffffff,3,0,0,0,ffffffffffffffff,1,0,1036'
+        data = decode(frame(base + f',{101325:x},{2732 + 215:x}'))
+        self.assertEqual((data['pressure_pa'], data['temp_c'], data['vbat_mv']), (101325, 21.5, 0x1036))
+        self.assertIn('P=1013.25hPa T=21.5C', format_measurement(data))
+        cold = decode(frame(base + f',{90000:x},{2732 - 123:x}'))
+        self.assertEqual(cold['temp_c'], -12.3)
+        none = decode(frame(base + ',0,0'))
+        self.assertIsNone(none['pressure_pa']); self.assertIsNone(none['temp_c'])
+        for bad in (base, base + ',0', base + ',18bcd,0', base + ',0,b7b', base + f',{110001:x},b7b',
+                    base + f',{20000:x},b7b', base + ',18bcd,fff'):
+            with self.assertRaises(ValueError, msg=bad):
+                decode(frame(bad))
+        # Worst case: uint64 fields at 16 digits, A/B/rain_interval capped at 8, 6600 mV,
+        # pressure 110000 Pa (5 digits), temperature 3 digits.
+        f, c = 'f' * 16, 'f' * 8
+        worst = f'W7,ffffffff,ffffffff,{f},{c},{c},{f},{f},{f},1,{f},{f},1,{f},{c},{f},1,{f},19c8,1adb0,dfe'
+        self.assertEqual(len(worst), 221)
+        self.assertLessEqual(len(f'+RCV=1,{len(worst)},{worst},-120,-20'), 255)
+
     def test_max_length(self):
         # All eight uint64 fields at full width still fit the module and receiver.
         payload = 'W2,ffffffff,4294967295,' + ','.join([str(UNKNOWN)]*8)

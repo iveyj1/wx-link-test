@@ -1,8 +1,8 @@
 # wx-link-test: Feather M0 / RYLR998 wind and rain link
 
-A battery sensor counts anemometer and tipping-bucket rain-gauge reed closures and reports them over LoRa. A USB-attached receiver forwards packets to a host, which records them in SQLite and serves a live LAN dashboard.
+A battery sensor counts anemometer and tipping-bucket rain-gauge reed closures, reads a BMP180 barometer, and reports over LoRa. A USB-attached receiver forwards packets to a host, which records them in SQLite and serves a live LAN dashboard.
 
-The sensor runs firmware **W6-vbat1** (W5 plus battery voltage; flashed 2026-11-06). The receiver runs the same sketch built with `SENSOR=0`.
+The sensor runs firmware **W7-baro1** (battery voltage, plus BMP180 pressure and temperature; flashed 2026-11-06). The receiver runs the same sketch built with `SENSOR=0`.
 
 ## Hardware
 
@@ -21,6 +21,7 @@ Sensor wiring (all inputs use the internal pull-up, active low):
 | D10 (PA18, EXTINT2) | Rain-gauge reed to GND: one ~100 ms closure per tip |
 | D6 | RYLR998 NRST (active low); harmless if unwired |
 | D0 / D1 | RYLR998 TXD / RXD (radio UART, 115200 baud) |
+| SDA / SCL (PA22 / PA23) | BMP180 barometer, I2C address 0x77, 100 kHz |
 
 Radio: 915 MHz, SF7, BW 500 kHz, CR 4/5, preamble 12, network 18, 2 dBm (configured and read back at startup; not a regulatory assessment). Do not use D9: it is the Feather's battery-voltage divider.
 
@@ -31,6 +32,7 @@ Radio: 915 MHz, SF7, BW 500 kHz, CR 4/5, preamble 12, network 18, 2 dBm (configu
 | `link/link.ino` | Firmware for both roles (`-DSENSOR=1/0`) |
 | `link/PulseCounter.h` | Wind reed debounce and revolution pairing |
 | `link/TipCounter.h` | Rain reed debounce and tip counting |
+| `link/Bmp180.h` | BMP180 compensation (datasheet integer maths; tested natively) |
 | `link/ReportSchedule.h` | Report triggering, 1 s cooldown, 5 s backoff, 60 s heartbeat |
 | `link/RadioUart.h` | Bounded polled UART transmit (see *Lessons learned*) |
 | `link/Diagnostics.h`, `retained.ld` | Execution-stage breadcrumb kept in `.noinit` RAM across resets |
@@ -58,6 +60,8 @@ $CLI upload -p /dev/ttyACM0 --fqbn adafruit:samd:adafruit_feather_m0 --input-dir
 * Always build with `./build.sh`: it adds `retained.ld`, without which the breadcrumb is cleared at startup (`test_trace_layout.py` checks placement).
 * Upload to the real `ttyACMn`, not the by-id link. The first attempt sometimes misses the bootloader; retry.
 * A board stuck in the bootloader (USB ID `239a:000b`) with intact firmware restarts with `bossac -p ttyACMn -R` (reset only, no write).
+* **The host can keep listing the bootloader after a flash while the new app runs** (Nov 6, W7: about 4 min; it ended without any change to the board, so it is probably on the host/hub side). Then the port answers nothing, the LED does not breathe, and packets still arrive by radio. Check the packet log before assuming the board is dead, and don't type into a port that is really the bootloader: its command parser gets stuck until a reset.
+* Calling bossac by hand: pass **`--offset=0x2000`** (the bootloader occupies the first 8 KB, write-protected). Without it, verification fails on 128 pages and the app area holds a shifted image. Double-tap reset gives a fresh bootloader (LED breathing).
 
 ## Dashboard service
 
@@ -76,10 +80,11 @@ Serves `http://<host>:8765/` on all interfaces, **without authentication or TLS*
 | `rain` | One row per packet whose tip count rose (`added` new tips) | 400 days |
 | `runs` | One row per sensor run (session, version, first/last packet): restart warnings | 400 days |
 | `gaps` | Stretches of more than 1 h without packets | 400 days |
+| `weather` | Pressure (Pa) and enclosure temperature, at most one row per minute (W7) | 400 days |
 | `maintenance` | Maintenance windows (start, end or NULL while open, note) | kept |
 | `state` | Latest decoded packet | — |
 
-API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bucket=<s>&calm=20`, condensed, ≤ 12 days), `/api/rain?start=&end=` (≤ 32 days), `/api/rain/total?start=&end=` (tip sum with restarts, gaps, maintenance windows and rain-logging start), `POST /api/maintenance` with JSON `{"action":"start"|"stop","note":…}` (JSON required, so another site can't trigger it). No `sqlite3` CLI is installed here; query with Python.
+API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bucket=<s>&calm=20`, condensed, ≤ 12 days), `/api/rain?start=&end=` (≤ 32 days), `/api/weather?start=&end=` (≤ 32 days; per-bucket pressure and temperature mean/min/max, maintenance excluded), `/api/rain/total?start=&end=` (tip sum with restarts, gaps, maintenance windows and rain-logging start), `POST /api/maintenance` with JSON `{"action":"start"|"stop","note":…}` (JSON required, so another site can't trigger it). No `sqlite3` CLI is installed here; query with Python.
 
 ## Maintenance, testing and downtime
 
@@ -108,12 +113,18 @@ Handling can't be told apart from weather afterwards: lowering the mast spins th
 ### Reporting and packets
 * A completed revolution or a rain tip triggers a report immediately, limited to one send per second (from completion), with a 5 s backoff after a failure and a 60 s heartbeat otherwise. Events during the cooldown are coalesced.
 * **Counts are cumulative since boot**, so a lost packet loses no pulses or tips; the next packet carries the totals. Counts are RAM-only and restart with a new session ID on reset.
-* **W6 payload** (all numbers lowercase hex, worst case 235 bytes, under the radio's 240-byte limit and the receiver's 255-character line): `W6,session,seq,count,A,B,age,rev_age,uptime,pin,pin_age,raw_edges,clock,rain_tips,rain_interval,rain_age,rain_pin,rain_raw_edges,vbat_mv`. W5 is the same without `vbat_mv`. Revolutions and period are derived by the decoder. Ages of `ffffffffffffffff` mean "never". `pin` = 1 is open, `clock` = 1 is the internal fallback. The receiver forwards `+RCV=1,len,payload,RSSI,SNR`. The decoder still accepts W1–W5.
+* **W7 payload** (all numbers lowercase hex, worst case 221 bytes, under the radio's 240-byte limit and the receiver's 255-character line): `W7,session,seq,count,A,B,age,rev_age,uptime,pin,pin_age,raw_edges,clock,rain_tips,rain_interval,rain_age,rain_pin,rain_raw_edges,vbat_mv,pressure_pa,temp_dk`. A, B and `rain_interval` are capped at `ffffffff` (36 h) to make room; `temp_dk` is 0.1 K (°C × 10 + 2732); both barometer fields are 0 when there is no reading. W6 is the same without the barometer fields and uncapped (worst case 235); W5 also lacks `vbat_mv`. Revolutions and period are derived by the decoder. Ages of `ffffffffffffffff` mean "never". `pin` = 1 is open, `clock` = 1 is the internal fallback. The receiver forwards `+RCV=1,len,payload,RSSI,SNR`. The decoder still accepts W1–W6.
 
 ### Battery
 * `vbat_mv` is read from A7/D9 (the Feather's 1:2 battery divider): eight 12-bit reads averaged, 3.3 V full scale, sampled when each report is built. On USB it shows the charger (about 4.2 V).
 * The dashboard's Battery panel shows the latest voltage, the last-6-h least-squares trend in mV/h with a rough time to 3.5 V, and a 6 h–7 day chart (mean line and min–max band). `/api/battery?start=&end=` returns per-bucket mean/min/max from the packet log (7 days).
 * **Estimate before measurement (1200 mAh):** about 5–8 mA average, so about 5–9 days, dominated by the MCU at 48 MHz in light sleep (~4–6 mA) because deep standby is disabled. Radio ≈ 0.8 mA at one report per 3 s. With deep standby re-enabled, roughly 1 mA (6–7 weeks).
+
+### Barometer (BMP180)
+* Probed at boot (chip ID 0x55, calibration EEPROM checked), read at most every 30 s inside a report at ultra-high resolution (oss 3, about 31 ms of `delay()` while counting continues in interrupts). Readings older than 5 min are sent as 0. If it is absent or keeps failing, it is probed again every 10 min, so it can be connected later.
+* A watchdog reset during an I2C access (a stuck bus) disables the barometer until the next reset, using the breadcrumb (`baro` stage), so a bad I2C bus cannot cause a reset loop.
+* Pressure is **station pressure**; the dashboard can reduce it to sea level from a station altitude set in the browser. The temperature is the BMP180's die inside the enclosure, not air temperature.
+* The dashboard shows pressure, its 3 h tendency, temperature, and 6 h–30 day charts. `!i2c-scan` lists I2C devices; `!status` includes a `baro` line.
 
 ### Dashboard display rules
 * Gaps are not zero wind: lines break only on missing revolutions, sensor restarts or no data.
@@ -147,11 +158,12 @@ Handling can't be told apart from weather afterwards: lowering the mast spins th
 | `!xosc-test` | Stop the crystal for 90 s; expect failover to the internal clock within ~8 s |
 | `!clock-retry` | Retry the crystal now |
 | `!diag-reset` | Software reset to test breadcrumb retention (**resets counts**) |
+| `!i2c-scan` | List devices on the I2C bus (BMP180 = 0x77) |
 | `!led on` / `!led off` | Identify the board |
 
 ## Open items
 
 * Wind calibration (gain/offset) has not been measured.
 * The rain calibration is a geometric estimate; verify with a known volume.
-* Power consumption and battery life are unmeasured (W6 battery telemetry pending flash); deep standby remains disabled.
+* Power consumption and battery life are unmeasured (battery telemetry is live since W6; measure on battery); deep standby remains disabled.
 * RF margin outdoors was marginal at times (RSSI ≈ −100 dBm); there is no acknowledgement or retransmit beyond cumulative counts.

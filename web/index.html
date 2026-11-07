@@ -54,6 +54,21 @@
 <button id="applyRain">Apply rain calibration</button></div><div class="caption">Each debounced D10 closure (about 100 ms per tip) is one tip; the reopening is not counted. Applies to live and historical totals; stored tip counts are unchanged. Saved in this browser.</div></details>
 <div id="rainNote" class="caption" role="status" style="margin-top:8px"></div>
 </section>
+<section class="chartbox" style="margin-top:20px" aria-label="Pressure and temperature">
+<div class="charthead"><h2>Pressure and temperature</h2><div class="nav"><label style="flex-direction:row;align-items:center">Range <select id="wxRange"><option value="21600">6 hours</option><option value="86400">24 hours</option><option value="259200" selected>3 days</option><option value="604800">7 days</option><option value="1209600">14 days</option><option value="2592000">30 days</option></select></label></div></div>
+<div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin:0 0 14px">
+<div class="card"><div class="muted" id="pTitle">Station pressure</div><div class="number"><span id="pNow">—</span> <small>hPa</small></div><div class="caption" id="pNote">Needs sensor firmware W7 and a BMP180</div></div>
+<div class="card"><div class="muted">Tendency, 3 h</div><div class="number"><span id="pTrend">—</span> <small>hPa</small></div><div class="caption" id="pTrendNote">change over the last 3 hours</div></div>
+<div class="card"><div class="muted">Enclosure temperature</div><div class="number"><span id="tNow">—</span> <small id="tUnit">°C</small></div><div class="caption" id="tNote">BMP180 inside the sensor box: sun and electronics warm it, so it is not air temperature</div></div>
+</div>
+<canvas id="pChart" role="img" aria-label="Pressure history"></canvas>
+<canvas id="tChart" role="img" aria-label="Enclosure temperature history" style="margin-top:10px"></canvas>
+<div class="foot"><span id="wxScale"></span><span>Line = mean per interval · band = min–max · one reading per minute is stored (kept 400 days) · maintenance windows left out</span></div>
+<details style="margin-top:12px"><summary>Pressure and temperature settings</summary><div class="controls">
+<label>Station altitude, m<input id="altitude" type="number" min="-500" max="9000" step="any" placeholder="0 = station pressure"></label>
+<label>Temperature units<select id="tUnits"><option value="C" selected>°C</option><option value="F">°F</option></select></label>
+<button id="applyWx">Apply</button></div><div class="caption">With an altitude, pressure is reduced to sea level (standard atmosphere: p × (1 − h/44330)<sup>−5.255</sup>), comparable with weather reports. Saved in this browser.</div></details>
+</section>
 <section class="chartbox" style="margin-top:20px" aria-label="Battery">
 <div class="charthead"><h2>Battery</h2><div class="nav"><label style="flex-direction:row;align-items:center">Range <select id="batRange"><option value="21600">6 hours</option><option value="86400" selected>24 hours</option><option value="259200">3 days</option><option value="604800">7 days</option></select></label></div></div>
 <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin:0 0 14px">
@@ -199,6 +214,7 @@ function paintDiag(p,radioAge){
   add('Last packet',`${radioAge.toFixed(1)} s ago · seq ${p.seq}`,radioAge>75);
   add('Missed, 1 h',loss(h1),h1&&h1.missing>0.05*(h1.received+h1.missing));
   add('Missed, 24 h',loss(h24));
+  add('Barometer',p.version!=='W7'?'— (needs W7)':p.pressure_pa==null?'⚠ BMP180 not answering':`BMP180 · ${(p.pressure_pa/100).toFixed(2)} hPa · ${p.temp_c.toFixed(1)} °C`,p.version==='W7'&&p.pressure_pa==null);
   add('Battery',p.vbat_v==null?'— (needs W6)':`${p.vbat_v.toFixed(2)} V`,p.vbat_v!=null&&p.vbat_v<3.5);
   add('32 kHz clock',p.clock==null?'—':p.clock?'⚠ internal fallback (crystal stopped)':'crystal',!!p.clock);
   if(p.pin!=null)add('Wind reed D5',`${p.pin?'open':'closed'}${p.pin_age_s==null?'':` · unchanged ${longDur(p.pin_age_s)}`}`);
@@ -497,10 +513,78 @@ $('maintBtn').onclick=async()=>{
   if(!r.ok)throw Error(`HTTP ${r.status}`);updateState(Object.assign(await r.json(),{cursor}));load();rainKey=null;rainTick();}
  catch(e){$('error').textContent=`Cannot change maintenance: ${e.message}`;}
 };
+// ---- Pressure and temperature (W7+, BMP180) ----
+let wxRange=259200, wxPoints=[], wxFetched=0, wxGen=0, altitude=0, tUnits='C';
+try{const w=JSON.parse(localStorage.getItem('wxSettings'));if(w){if([21600,86400,259200,604800,1209600,2592000].includes(w.range))wxRange=w.range;
+ if(Number.isFinite(w.altitude)&&w.altitude>=-500&&w.altitude<=9000)altitude=w.altitude;if(['C','F'].includes(w.tUnits))tUnits=w.tUnits;}}catch(e){}
+const saveWx=()=>{try{localStorage.setItem('wxSettings',JSON.stringify({range:wxRange,altitude,tUnits}));}catch(e){}};
+$('wxRange').value=String(wxRange);$('altitude').value=altitude||'';$('tUnits').value=tUnits;
+const hPa=pa=>pa==null?null:pa/100*(altitude?Math.pow(1-altitude/44330,-5.255):1);
+const tVal=c=>c==null?null:tUnits==='F'?c*9/5+32:c;
+async function loadWx(){
+ const gen=++wxGen, now=clock();
+ try{const d=await get(`/api/weather?start=${now-wxRange}&end=${now}`);if(gen!==wxGen)return;wxPoints=d.points;wxFetched=Date.now();drawWx();}
+ catch(e){if(gen===wxGen)$('wxScale').textContent=`Cannot load pressure: ${e.message}`;}
+}
+// Pressure 3 h ago, from the stored minute rows' buckets (needs history reaching back 3 h).
+function pressureAgo(now,sec){
+ let best=null;for(const p of wxPoints){const d=Math.abs(p.t0-(now-sec));if(d<=Math.max(900,wxRange/720)&&(!best||d<best.d))best={d,p};}
+ return best?.p.p??null;
+}
+function paintWx(){
+ const p=state?.latest, now=clock(), have=p?.pressure_pa!=null;
+ $('pTitle').textContent=altitude?`Sea-level pressure (${altitude} m)`:'Station pressure';
+ $('tUnit').textContent=tUnits==='F'?'°F':'°C';
+ $('pNow').textContent=have?pad(hPa(p.pressure_pa),1,4):'—';
+ $('tNow').textContent=have?pad(tVal(p.temp_c),1,3):'—';
+ $('pNote').textContent=have?`at last packet, ${durText(Math.max(0,now-p.received))} ago${altitude?` · station ${(p.pressure_pa/100).toFixed(1)} hPa`:''}`:p&&p.version==='W7'?'No reading: BMP180 not answering':'Needs sensor firmware W7 and a BMP180';
+ const ago=pressureAgo(now,10800);
+ if(have&&ago!=null){const d=hPa(p.pressure_pa)-hPa(ago);
+  $('pTrend').textContent=(d>=0?'+':'−')+pad(Math.abs(d),1,2).trimStart();
+  $('pTrendNote').textContent=Math.abs(d)<0.1?'steady':Math.abs(d)<1.5?(d>0?'rising slowly':'falling slowly'):Math.abs(d)<3.5?(d>0?'rising':'falling'):(d>0?'rising quickly':'falling quickly');}
+ else{$('pTrend').textContent='—';$('pTrendNote').textContent='needs 3 h of readings';}
+}
+// One band-and-line chart: pts {t0, mean, lo, hi}; values already in display units.
+function drawBand(cv,pts,start,span,fmt,label,color){
+ const c=cv.getContext('2d'), width=cv.clientWidth, height=150, left=60, right=16, top=12, plotH=height-top-30, plotW=width-left-right;
+ const ratio=window.devicePixelRatio||1;cv.style.height=height+'px';cv.width=Math.round(width*ratio);cv.height=Math.round(height*ratio);c.setTransform(ratio,0,0,ratio,0,0);
+ c.fillStyle='#101e2b';c.fillRect(0,0,width,height);c.font='11px system-ui';c.textBaseline='middle';
+ let lo=Infinity,hi=-Infinity;for(const p of pts){lo=Math.min(lo,p.lo);hi=Math.max(hi,p.hi);}
+ if(!pts.length){lo=0;hi=1;}
+ // Padded range on round steps (at least 0.5 units tall, so sensor noise doesn't fill the chart).
+ const pad=Math.max(0.25,(hi-lo)*0.1), step=WindMath.niceScale(hi-lo+2*pad,4,false).step;
+ const vlo=Math.floor((lo-pad)/step)*step, vhi=Math.ceil((hi+pad)/step)*step;
+ const X=t=>left+(t-start)/span*plotW, Y=v=>top+plotH-(v-vlo)/(vhi-vlo)*plotH;
+ for(let v=vlo;v<=vhi+step*1e-6;v+=step){const y=Y(v);c.strokeStyle='#294052';c.beginPath();c.moveTo(left,y);c.lineTo(width-right,y);c.stroke();
+  c.fillStyle='#839caf';c.textAlign='right';c.fillText(WindMath.tickLabel(Number(v.toPrecision(12)),step),left-5,y);}
+ for(let j=0;j<=6;j++){const t=start+span*j/6,x=X(t);c.strokeStyle='#223746';c.beginPath();c.moveTo(x,top);c.lineTo(x,top+plotH);c.stroke();
+  c.fillStyle='#839caf';c.textAlign=j===0?'left':j===6?'right':'center';
+  c.fillText(span>86400?new Date(t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',hour12:false}):timeText(t).slice(0,5),x,top+plotH+16);}
+ shadeMaint(c,start,start+span,X,top,plotH);
+ const w=Math.max(60,span/720), gap=(a,b)=>b.t0-a.t0>3*w;
+ c.fillStyle=color+'2e';
+ for(const p of pts){const x0=X(p.t0),x1=X(p.t0+w);c.fillRect(x0,Y(p.hi),Math.max(1,x1-x0),Math.max(1,Y(p.lo)-Y(p.hi)));}
+ c.strokeStyle=color;c.lineWidth=1.6;c.beginPath();
+ pts.forEach((p,i)=>{const x=X(p.t0+w/2),y=Y(p.mean);if(i===0||gap(pts[i-1],p))c.moveTo(x,y);else c.lineTo(x,y);});
+ c.stroke();c.lineWidth=1;
+ c.fillStyle='#b8cbd8';c.textAlign='left';c.fillText(label,left+6,top+8);
+ return pts.length?`${fmt(lo)}–${fmt(hi)}`:null;
+}
+function drawWx(){
+ const now=clock(), start=now-wxRange, pu=altitude?'hPa sea level':'hPa', tu=tUnits==='F'?'°F':'°C';
+ const pr=drawBand($('pChart'),wxPoints.map(p=>({t0:p.t0,mean:hPa(p.p),lo:hPa(p.plo),hi:hPa(p.phi)})),start,wxRange,v=>v.toFixed(1),`Pressure, ${pu}`,'#b48cff');
+ const tr=drawBand($('tChart'),wxPoints.map(p=>({t0:p.t0,mean:tVal(p.c),lo:tVal(p.clo),hi:tVal(p.chi)})),start,wxRange,v=>v.toFixed(1),`Enclosure temperature, ${tu}`,'#ff9f6c');
+ $('wxScale').textContent=pr?`Pressure ${pr} ${pu} · temperature ${tr} ${tu} · last ${durText(wxRange)}`:state?.maintenance_active&&state.latest?.pressure_pa!=null?'No readings outside maintenance in this range yet (readings during maintenance are hidden)':'No pressure readings in this range yet (sensor firmware W7 with a BMP180)';
+ paintWx();
+}
+new ResizeObserver(drawWx).observe($('pChart').parentElement);
+$('wxRange').addEventListener('change',()=>{wxRange=Number($('wxRange').value);saveWx();loadWx();});
+$('applyWx').onclick=()=>{if(!$('altitude').checkValidity()){$('altitude').reportValidity();return;}altitude=Number($('altitude').value)||0;tUnits=$('tUnits').value;saveWx();drawWx();};
+function wxTick(){if(!state)return;paintWx();if(Date.now()-wxFetched>60000)loadWx();}
 async function poll(){
  try{
   if(loaded){const gen=generation,data=await get(`/api/live?after=${cursor}`);
-   if(gen===generation){updateState(data);rainTick();batTick();
+   if(gen===generation){updateState(data);rainTick();batTick();wxTick();
     if(live&&condensed()){if(Date.now()-lastLoad>30000)load();}  // condensed history: refresh, don't append raw points
     else if(live){const start=endTime()-rows*duration;points=points.concat(data.points).filter(p=>p.t>=start);}
     $('error').textContent='';draw();}

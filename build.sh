@@ -17,5 +17,7 @@ g++ -std=c++11 -Wall -Wextra test_revolutions.cpp -o build/test_revolutions
 build/test_revolutions
 g++ -std=c++11 -Wall -Wextra test_tips.cpp -o build/test_tips
 build/test_tips
+g++ -std=c++11 -Wall -Wextra test_bmp180.cpp -o build/test_bmp180
+build/test_bmp180
 python -m unittest test_monitor
 python test_trace_layout.py

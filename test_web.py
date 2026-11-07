@@ -144,6 +144,26 @@ class WebTests(unittest.TestCase):
         self.w5(9, 0, received=now + 300)       # W5 packets carry no battery value
         self.assertIsNone(self.store.latest['vbat_v'])
 
+    def test_w7_weather_logged(self):
+        now = 1_800_000_000.0
+        def w7(i, pa, dk, t):
+            p = (f'W7,abcd1234,{i:x},3,2000,6000,148,148,{100000 + i * 32768:x},1,ffffffffffffffff,3,0,'
+                 f'0,0,ffffffffffffffff,1,0,1000,{pa:x},{dk:x}')
+            self.store.accept(decode(f'+RCV=1,{len(p)},{p},-80,9'), t)
+        w7(1, 101300, 2932, now)          # 20.0 C
+        w7(2, 101310, 2934, now + 20)     # within WEATHER_STEP: packet only
+        w7(3, 101200, 2942, now + 70)
+        w7(4, 0, 0, now + 140)            # no barometer reading
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM weather').fetchone()[0], 2)
+        self.assertEqual(tuple(self.store.db.execute('SELECT pressure_pa, temp_c FROM packets ORDER BY t').fetchall()[1]),
+                         (101310, 20.2))
+        self.assertIsNone(self.store.latest['pressure_pa'])
+        pts = self.store.weather(now, now + 600, 600)['points']
+        self.assertEqual((pts[0]['plo'], pts[0]['phi'], pts[0]['n']), (101200, 101300, 2))
+        self.assertAlmostEqual(pts[0]['c'], 20.5)
+        self.store.maintenance('start', now=now + 60); self.store.maintenance('stop', now=now + 100)
+        self.assertEqual(self.store.weather(now, now + 600, 600)['points'][0]['n'], 1)
+
     def test_condensed_history(self):
         now = 1_800_000_000.0
         # 30 one-second revolutions in one 60 s bucket, then a 300 s calm revolution.
@@ -255,6 +275,10 @@ class WebTests(unittest.TestCase):
             with urlopen(base+'/math.js') as response:
                 self.assertIn(b'niceScale', response.read())
                 self.assertIn('javascript', response.headers['Content-Type'])
+            with urlopen(base+'/api/weather?start=0&end=86400') as response:
+                self.assertEqual(json.load(response)['points'], [])
+            with self.assertRaises(HTTPError):
+                urlopen(base+'/api/weather?start=0&end=99999999')
             with urlopen(base+'/api/battery?start=0&end=86400') as response:
                 self.assertEqual(json.load(response)['points'], [])
             with urlopen(base+'/api/rain/total?start=0&end=86400') as response:

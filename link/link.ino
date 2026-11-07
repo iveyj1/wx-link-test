@@ -4,11 +4,13 @@
 #include "ReportSchedule.h"
 #include "Diagnostics.h"
 #include "RadioUart.h"
+#include "Bmp180.h"
+#include <Wire.h>
 #ifndef SENSOR
 #define SENSOR 1
 #endif
 
-#define FIRMWARE "W6-vbat1"
+#define FIRMWARE "W7-baro1"
 constexpr uint32_t HZ = 32768;
 constexpr uint8_t REED = 5;
 constexpr uint8_t VBAT = A7; // = D9: battery through the Feather's 1:2 divider (do not use D9 otherwise)
@@ -402,6 +404,78 @@ char *hex64(uint64_t n, char *out) {
 }
 // Battery millivolts: average of 8 12-bit reads, 3.3 V full scale, x2 for the divider.
 // On USB the charger holds this near 4.2 V; it reflects the cell only on battery.
+// ---- BMP180 barometer on I2C (SDA/SCL, 0x77) ----
+// Read at most every BARO_EVERY_MS, inside report(): ~31 ms of delay() while counting continues
+// in interrupts. Absent or failing: fields are sent as 0 and probing is retried every 10 min.
+// A watchdog reset during an I2C access (stuck bus) disables the barometer until the next boot.
+constexpr uint8_t BMP180_ADDR = 0x77, BMP_OSS = 3; // ultra high resolution: 25.5 ms, ~0.03 hPa rms
+constexpr uint32_t BARO_EVERY_MS = 30000, BARO_RETRY_MS = 600000, BARO_STALE_MS = 300000;
+Bmp180Cal baroCal;
+bool baroOK = false, baroDisabled = false, baroHave = false;
+int32_t baroDeciC = 0, baroPa = 0;
+uint32_t baroReadMs = 0, baroProbeMs = 0, baroGoodMs = 0, baroErrors = 0;
+bool i2cRead(uint8_t reg, uint8_t *buf, uint8_t n) {
+  Wire.beginTransmission(BMP180_ADDR); Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(BMP180_ADDR, n) != n) return false;
+  for (uint8_t i = 0; i < n; ++i) buf[i] = Wire.read();
+  return true;
+}
+bool i2cWrite(uint8_t reg, uint8_t v) {
+  Wire.beginTransmission(BMP180_ADDR); Wire.write(reg); Wire.write(v);
+  return Wire.endTransmission() == 0;
+}
+bool baroBegin() {
+  StageScope stage(ST_BARO);
+  baroProbeMs = millis();
+  uint8_t id = 0, e[22];
+  if (!i2cRead(0xD0, &id, 1) || id != 0x55 || !i2cRead(0xAA, e, 22)) return false;
+  auto w = [&](int i) { return uint16_t(e[2*i] << 8 | e[2*i+1]); };
+  baroCal = {int16_t(w(0)), int16_t(w(1)), int16_t(w(2)), w(3), w(4), w(5),
+             int16_t(w(6)), int16_t(w(7)), int16_t(w(8)), int16_t(w(9)), int16_t(w(10))};
+  return baroCal.plausible();
+}
+bool baroRead() {
+  StageScope stage(ST_BARO);
+  uint8_t b[3];
+  if (!i2cWrite(0xF4, 0x2E)) return false;
+  delay(5);
+  if (!i2cRead(0xF6, b, 2)) return false;
+  const int32_t ut = int32_t(b[0]) << 8 | b[1];
+  if (!i2cWrite(0xF4, 0x34 | (BMP_OSS << 6))) return false;
+  delay(26);
+  if (!i2cRead(0xF6, b, 3)) return false;
+  const int32_t up = (int32_t(b[0]) << 16 | int32_t(b[1]) << 8 | b[2]) >> (8 - BMP_OSS);
+  int32_t t, pa;
+  bmp180Compensate(baroCal, ut, up, BMP_OSS, t, pa);
+  if (pa < 30000 || pa > 110000 || t < -500 || t > 850) return false;
+  baroDeciC = t; baroPa = pa;
+  return true;
+}
+void baroService() {
+  if (baroDisabled) return;
+  const uint32_t ms = millis();
+  if (!baroOK) {
+    if (baroProbeMs && ms - baroProbeMs < BARO_RETRY_MS) return;
+    if (!(baroOK = baroBegin())) return;
+    baroReadMs = ms - BARO_EVERY_MS;
+  }
+  if (baroHave && ms - baroReadMs < BARO_EVERY_MS) return;
+  baroReadMs = ms;
+  if (baroRead()) { baroHave = true; baroGoodMs = ms; }
+  else if (++baroErrors, ms - baroGoodMs > BARO_STALE_MS) baroOK = false; // re-probe later
+}
+void i2cScan() {
+  StageScope stage(ST_BARO);
+  char msg[200] = "# i2c devices:"; size_t n = strlen(msg);
+  for (uint8_t a = 1; a < 127; ++a) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission() == 0 && n + 6 < sizeof(msg)) n += snprintf(msg + n, sizeof(msg) - n, " 0x%02x", a);
+    wdtKick();
+  }
+  if (n == strlen("# i2c devices:")) strcat(msg, " none");
+  logLine(msg);
+}
 uint32_t readVbatMv() {
   uint32_t sum = 0;
   for (unsigned i = 0; i < 8; ++i) sum += analogRead(VBAT);
@@ -429,24 +503,32 @@ void report() {
   traceStage(ST_REPORT);
   if (!due) return;
   const uint32_t vbatMv = readVbatMv();
+  baroService();
+  const bool baroFresh = baroHave && millis() - baroGoodMs < BARO_STALE_MS;
+  const uint64_t pressurePa = baroFresh ? baroPa : 0, tempDeciK = baroFresh ? baroDeciC + 2732 : 0; // 0 = none
   char payload[256], cmd[288];
-  // W6: every number is lowercase hex (uint64 <= 16 digits) so the worst case is provably
-  // 235 bytes, under the radio's 240-byte limit (and the receiver's 255-character line). Revolutions and period are omitted: the
-  // receiver derives them exactly (revolutions = (count-1)/2, period = A + B).
-  //   W5,session,seq,count,A,B,age,rev_age,uptime,pin,pin_age,raw_edges,clock,
-  //      rain_tips,rain_interval,rain_age,rain_pin,rain_raw_edges,vbat_mv
+  // W7: every number is lowercase hex. uint64 fields take <= 16 digits; A, B and rain_interval
+  // are capped at ffffffff (36 h), pressure (<= 110000 Pa) at 5 and temperature at 3, so the worst
+  // case is provably 221 bytes, under the radio's 240-byte limit (and the receiver's
+  // 255-character line). Revolutions and period are omitted: the receiver derives them exactly
+  // (revolutions = (count-1)/2, period = A + B).
+  //   W7,session,seq,count,A,B,age,rev_age,uptime,pin,pin_age,raw_edges,clock,
+  //      rain_tips,rain_interval,rain_age,rain_pin,rain_raw_edges,vbat_mv,pressure_pa,temp_dk
+  // temp_dk = 0.1 K (deg C x 10 + 2732); pressure/temp 0 = no barometer reading.
   // Pins: 1 = open/high. rain_interval 0 = fewer than two tips; ages all-f = never.
-  const uint64_t fields[] = {count,intervalA,intervalB,age,revAge,now};
-  char *out = payload + snprintf(payload,sizeof(payload),"W6,%08lx,%lx",
+  auto cap32 = [](uint64_t v) { return v > 0xffffffffULL ? uint64_t(0xffffffffULL) : v; };
+  const uint64_t fields[] = {count,cap32(intervalA),cap32(intervalB),age,revAge,now};
+  char *out = payload + snprintf(payload,sizeof(payload),"W7,%08lx,%lx",
                                  (unsigned long)session,(unsigned long)++sequence);
   for (uint64_t v : fields) out = hex64(v,out);
   *out++ = ','; *out++ = '0' + pin;
   out = hex64(pinAge,out); out = hex64(edges,out);
   *out++ = ','; *out++ = '0' + onInternalClock;
-  out = hex64(tips,out); out = hex64(tipInterval,out); out = hex64(tipAge,out);
+  out = hex64(tips,out); out = hex64(cap32(tipInterval),out); out = hex64(tipAge,out);
   *out++ = ','; *out++ = '0' + rainPin;
   out = hex64(tipEdges,out);
   out = hex64(vbatMv,out);
+  out = hex64(pressurePa,out); out = hex64(tempDeciK,out);
   *out = 0;
   logLine(payload);
   if (SENSOR && consecutiveFails >= RADIO_RESET_AFTER_FAILS &&
@@ -508,6 +590,12 @@ void setup() {
   }
   for (unsigned i=0;i<32;i++) session = (session << 1) ^ analogRead(A0) ^ uint32_t(ticks());
   analogReadResolution(12); // battery reads
+  if (SENSOR) {
+    Wire.begin(); Wire.setClock(100000);
+    // A watchdog reset inside an I2C access means a stuck bus: leave the barometer off this boot.
+    baroDisabled = previousTraceValid && previousTrace.stage == ST_BARO;
+    if (!baroDisabled) baroOK = baroBegin();
+  }
   traceRecord.session = session;
   wdtBegin();
   delay(1500);
@@ -557,7 +645,7 @@ void serviceUsb() {
         interrupts();
         char re[21];
         decimal64(n,c); decimal64(rev,r); decimal64(t,p); decimal64(e,re);
-        snprintf(msg,sizeof(msg),"# %s W6 radio=%s pin5=%d pulses=%s revolutions=%s rev_period_ticks=%s raw_edges=%s",
+        snprintf(msg,sizeof(msg),"# %s W7 radio=%s pin5=%d pulses=%s revolutions=%s rev_period_ticks=%s raw_edges=%s",
                  SENSOR ? "sensor" : "receiver",radioOK ? "OK" : "ERROR",digitalRead(REED),c,r,p,re);
         logLine(msg);
         noInterrupts();
@@ -566,6 +654,10 @@ void serviceUsb() {
         decimal64(tipsNow,c); decimal64(tipEdgesNow,re);
         snprintf(msg,sizeof(msg),"# rain D10=%d tips=%s raw_edges=%s (1 tip per debounced closure; clean = 2 edges per tip) vbat=%lu mV",
                  digitalRead(RAIN),c,re,(unsigned long)readVbatMv());
+        logLine(msg);
+        snprintf(msg,sizeof(msg),"# baro BMP180 %s pressure=%ld Pa temp=%s%ld.%ld C errors=%lu last_good_ms_ago=%lu",
+                 baroDisabled ? "DISABLED(wdt during i2c)" : baroOK ? "OK" : "absent",(long)baroPa,baroDeciC < 0 ? "-" : "",
+                 (long)(abs(baroDeciC)/10),(long)(abs(baroDeciC)%10),(unsigned long)baroErrors,(unsigned long)(baroHave ? millis()-baroGoodMs : 0));
         logLine(msg);
         snprintf(msg,sizeof(msg),"# fw=" FIRMWARE " session=%08lx reset=0x%02x sleepprm=%u standby=%lu/%lu tx_ok=%lu tx_fail=%lu",
                  (unsigned long)session,resetCause,(unsigned)NVMCTRL->CTRLB.bit.SLEEPPRM,
@@ -599,6 +691,9 @@ void serviceUsb() {
                    (unsigned long)previousTrace.sinceMs,previousTrace.command);
           logLine(diag);
         } else logLine("# previous_trace unavailable (power loss, overwrite, or first diagnostic boot)");
+      } else if (!strcmp(input,"!i2c-scan") && SENSOR) {
+        if (baroDisabled) logLine("# i2c disabled this boot (watchdog reset during I2C)");
+        else i2cScan();
       } else if (!strcmp(input,"!led on")) digitalWrite(LED_BUILTIN,HIGH);
       else if (!strcmp(input,"!led off")) digitalWrite(LED_BUILTIN,LOW);
     } else if (used < sizeof(input)-1) input[used++] = ch;
