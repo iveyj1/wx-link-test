@@ -123,7 +123,7 @@ Handling can't be told apart from weather afterwards: lowering the mast spins th
 ### Barometer (BMP180)
 * Probed at boot (chip ID 0x55, calibration EEPROM checked), read at most every 30 s inside a report at ultra-high resolution (oss 3, about 31 ms of `delay()` while counting continues in interrupts). Readings older than 5 min are sent as 0. If it is absent or keeps failing, it is probed again every 10 min, so it can be connected later.
 * A watchdog reset during an I2C access (a stuck bus) disables the barometer until the next reset, using the breadcrumb (`baro` stage), so a bad I2C bus cannot cause a reset loop.
-* Pressure is **station pressure**; the dashboard can reduce it to sea level from a station altitude set in the browser. The temperature is the BMP180's die inside the enclosure, not air temperature.
+* Pressure is recorded as raw **station pressure**. The dashboard adds a correction and reduces to sea level with the altimeter-setting formula, so it compares directly with METAR altimeter settings. Defaults: 256 m (same elevation as KARB, 839 ft) and **+3.5 hPa**. On Nov 6 at 23:34 the sensor read 982.93 hPa, while KARB's 30.03 inHg implies 986.48 hPa at 256 m: −3.55 hPa, within the BMP180's −4/+2 hPa absolute spec. Settings has a "Calibrate to it now" helper; repeat on a few days, because METARs are rounded to 0.34 hPa. The temperature is the BMP180's die inside the enclosure, not air temperature.
 * The dashboard shows pressure, its 3 h tendency, temperature, and 6 h–30 day charts. `!i2c-scan` lists I2C devices; `!status` includes a `baro` line.
 
 ### Dashboard display rules

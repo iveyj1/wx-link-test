@@ -66,8 +66,11 @@
 <div class="foot"><span id="wxScale"></span><span>Line = mean per interval · band = min–max · one reading per minute is stored (kept 400 days) · maintenance windows left out</span></div>
 <details style="margin-top:12px"><summary>Pressure and temperature settings</summary><div class="controls">
 <label>Station altitude, m<input id="altitude" type="number" min="-500" max="9000" step="any" placeholder="0 = station pressure"></label>
+<label>Pressure correction, hPa<input id="pOffset" type="number" min="-20" max="20" step="any"></label>
 <label>Temperature units<select id="tUnits"><option value="C" selected>°C</option><option value="F">°F</option></select></label>
-<button id="applyWx">Apply</button></div><div class="caption">With an altitude, pressure is reduced to sea level (standard atmosphere: p × (1 − h/44330)<sup>−5.255</sup>), comparable with weather reports. Saved in this browser.</div></details>
+<button id="applyWx">Apply</button></div>
+<div class="controls" style="padding-top:0"><label>Nearby altimeter setting, inHg<input id="altimeter" type="number" min="25" max="33" step="0.01" placeholder="e.g. 30.03"></label><button id="calFromAltimeter" title="Set the correction so the current reading matches this altimeter setting at the station altitude">Calibrate to it now</button><span class="caption" id="calResult"></span></div>
+<div class="caption">Pressure shown = (sensor + correction), reduced to sea level when an altitude is set (standard atmosphere: p × (1 − h/44330.77)<sup>−5.2559</sup>; this is how an altimeter setting is defined, so the two compare directly). The BMP180's absolute error is up to −4/+2 hPa, so calibrate against a nearby airport's current altimeter setting at the same elevation; repeat on a few days and average, because METARs are hourly and rounded to 0.01 inHg (0.34 hPa). Defaults: 256 m (KARB field elevation) and +3.5 hPa (one comparison: KARB 30.03 inHg, Nov 6 23:34). Saved in this browser.</div></details>
 </section>
 <section class="chartbox" style="margin-top:20px" aria-label="Battery">
 <div class="charthead"><h2>Battery</h2><div class="nav"><label style="flex-direction:row;align-items:center">Range <select id="batRange"><option value="21600">6 hours</option><option value="86400" selected>24 hours</option><option value="259200">3 days</option><option value="604800">7 days</option></select></label></div></div>
@@ -214,7 +217,7 @@ function paintDiag(p,radioAge){
   add('Last packet',`${radioAge.toFixed(1)} s ago · seq ${p.seq}`,radioAge>75);
   add('Missed, 1 h',loss(h1),h1&&h1.missing>0.05*(h1.received+h1.missing));
   add('Missed, 24 h',loss(h24));
-  add('Barometer',p.version!=='W7'?'— (needs W7)':p.pressure_pa==null?'⚠ BMP180 not answering':`BMP180 · ${(p.pressure_pa/100).toFixed(2)} hPa · ${p.temp_c.toFixed(1)} °C`,p.version==='W7'&&p.pressure_pa==null);
+  add('Barometer',p.version!=='W7'?'— (needs W7)':p.pressure_pa==null?'⚠ BMP180 not answering':`BMP180 · raw ${(p.pressure_pa/100).toFixed(2)} hPa · ${p.temp_c.toFixed(1)} °C`,p.version==='W7'&&p.pressure_pa==null);
   add('Battery',p.vbat_v==null?'— (needs W6)':`${p.vbat_v.toFixed(2)} V`,p.vbat_v!=null&&p.vbat_v<3.5);
   add('32 kHz clock',p.clock==null?'—':p.clock?'⚠ internal fallback (crystal stopped)':'crystal',!!p.clock);
   if(p.pin!=null)add('Wind reed D5',`${p.pin?'open':'closed'}${p.pin_age_s==null?'':` · unchanged ${longDur(p.pin_age_s)}`}`);
@@ -514,12 +517,16 @@ $('maintBtn').onclick=async()=>{
  catch(e){$('error').textContent=`Cannot change maintenance: ${e.message}`;}
 };
 // ---- Pressure and temperature (W7+, BMP180) ----
-let wxRange=259200, wxPoints=[], wxFetched=0, wxGen=0, altitude=0, tUnits='C';
+// Defaults: station at KARB's field elevation; correction from one altimeter comparison (Nov 6).
+const ALT_DEFAULT=256, POFF_DEFAULT=3.5;
+let wxRange=259200, wxPoints=[], wxFetched=0, wxGen=0, altitude=ALT_DEFAULT, pOffset=POFF_DEFAULT, tUnits='C';
 try{const w=JSON.parse(localStorage.getItem('wxSettings'));if(w){if([21600,86400,259200,604800,1209600,2592000].includes(w.range))wxRange=w.range;
- if(Number.isFinite(w.altitude)&&w.altitude>=-500&&w.altitude<=9000)altitude=w.altitude;if(['C','F'].includes(w.tUnits))tUnits=w.tUnits;}}catch(e){}
-const saveWx=()=>{try{localStorage.setItem('wxSettings',JSON.stringify({range:wxRange,altitude,tUnits}));}catch(e){}};
-$('wxRange').value=String(wxRange);$('altitude').value=altitude||'';$('tUnits').value=tUnits;
-const hPa=pa=>pa==null?null:pa/100*(altitude?Math.pow(1-altitude/44330,-5.255):1);
+ if(Number.isFinite(w.altitude)&&w.altitude>=-500&&w.altitude<=9000)altitude=w.altitude;if(Number.isFinite(w.pOffset)&&Math.abs(w.pOffset)<=20)pOffset=w.pOffset;if(['C','F'].includes(w.tUnits))tUnits=w.tUnits;}}catch(e){}
+const saveWx=()=>{try{localStorage.setItem('wxSettings',JSON.stringify({range:wxRange,altitude,pOffset,tUnits}));}catch(e){}};
+$('wxRange').value=String(wxRange);$('altitude').value=altitude||'';$('pOffset').value=pOffset;$('tUnits').value=tUnits;
+const SL=()=>altitude?Math.pow(1-altitude/44330.77,-5.25588):1;
+const stationHpa=pa=>pa==null?null:pa/100+pOffset;  // corrected station pressure
+const hPa=pa=>pa==null?null:stationHpa(pa)*SL();
 const tVal=c=>c==null?null:tUnits==='F'?c*9/5+32:c;
 async function loadWx(){
  const gen=++wxGen, now=clock();
@@ -537,7 +544,7 @@ function paintWx(){
  $('tUnit').textContent=tUnits==='F'?'°F':'°C';
  $('pNow').textContent=have?pad(hPa(p.pressure_pa),1,4):'—';
  $('tNow').textContent=have?pad(tVal(p.temp_c),1,3):'—';
- $('pNote').textContent=have?`at last packet, ${durText(Math.max(0,now-p.received))} ago${altitude?` · station ${(p.pressure_pa/100).toFixed(1)} hPa`:''}`:p&&p.version==='W7'?'No reading: BMP180 not answering':'Needs sensor firmware W7 and a BMP180';
+ $('pNote').textContent=have?`at last packet, ${durText(Math.max(0,now-p.received))} ago${altitude?` · station ${stationHpa(p.pressure_pa).toFixed(1)} hPa`:''} · = ${(hPa(p.pressure_pa)/33.8639).toFixed(2)} inHg${pOffset?` · correction ${pOffset>0?'+':''}${pOffset} hPa`:''}`:p&&p.version==='W7'?'No reading: BMP180 not answering':'Needs sensor firmware W7 and a BMP180';
  const ago=pressureAgo(now,10800);
  if(have&&ago!=null){const d=hPa(p.pressure_pa)-hPa(ago);
   $('pTrend').textContent=(d>=0?'+':'−')+pad(Math.abs(d),1,2).trimStart();
@@ -579,7 +586,19 @@ function drawWx(){
 }
 new ResizeObserver(drawWx).observe($('pChart').parentElement);
 $('wxRange').addEventListener('change',()=>{wxRange=Number($('wxRange').value);saveWx();loadWx();});
-$('applyWx').onclick=()=>{if(!$('altitude').checkValidity()){$('altitude').reportValidity();return;}altitude=Number($('altitude').value)||0;tUnits=$('tUnits').value;saveWx();drawWx();};
+$('applyWx').onclick=()=>{for(const id of ['altitude','pOffset'])if(!$(id).checkValidity()){$(id).reportValidity();return;}
+ altitude=Number($('altitude').value)||0;pOffset=Number($('pOffset').value)||0;tUnits=$('tUnits').value;saveWx();drawWx();};
+// Correction so that the latest reading, reduced at the station altitude, equals the given altimeter setting.
+$('calFromAltimeter').onclick=()=>{
+ const inHg=Number($('altimeter').value), pa=state?.latest?.pressure_pa;
+ if(!$('altimeter').value||!$('altimeter').checkValidity()){$('altimeter').reportValidity();return;}
+ if(pa==null){$('calResult').textContent='No current pressure reading';return;}
+ if(!altitude){$('calResult').textContent='Set the station altitude first';return;}
+ const expected=inHg*33.8639/SL(), off=Number((expected-pa/100).toFixed(2));
+ if(Math.abs(off)>20){$('calResult').textContent=`Correction ${off} hPa is implausible; check the altitude and setting`;return;}
+ pOffset=off;$('pOffset').value=off;saveWx();drawWx();
+ $('calResult').textContent=`Correction set to ${off>0?'+':''}${off} hPa (expected station ${expected.toFixed(2)} hPa, sensor ${(pa/100).toFixed(2)} hPa)`;
+};
 function wxTick(){if(!state)return;paintWx();if(Date.now()-wxFetched>60000)loadWx();}
 async function poll(){
  try{
