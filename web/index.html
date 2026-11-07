@@ -70,7 +70,7 @@
 <label>Temperature units<select id="tUnits"><option value="C" selected>°C</option><option value="F">°F</option></select></label>
 <button id="applyWx">Apply</button></div>
 <div class="controls" style="padding-top:0"><label>Nearby altimeter setting, inHg<input id="altimeter" type="number" min="25" max="33" step="0.01" placeholder="e.g. 30.03"></label><button id="calFromAltimeter" title="Set the correction so the current reading matches this altimeter setting at the station altitude">Calibrate to it now</button><span class="caption" id="calResult"></span></div>
-<div class="caption">Pressure shown = (sensor + correction), reduced to sea level when an altitude is set (standard atmosphere: p × (1 − h/44330.77)<sup>−5.2559</sup>; this is how an altimeter setting is defined, so the two compare directly). The BMP180's absolute error is up to −4/+2 hPa, so calibrate against a nearby airport's current altimeter setting at the same elevation; repeat on a few days and average, because METARs are hourly and rounded to 0.01 inHg (0.34 hPa). Defaults: 256 m (KARB field elevation) and +3.5 hPa (one comparison: KARB 30.03 inHg, Nov 6 23:34). Saved in this browser.</div></details>
+<div class="caption">Pressure shown = (sensor + correction), reduced to sea level when an altitude is set (standard atmosphere: p × (1 − h/44330.77)<sup>−5.2559</sup>; this is how an altimeter setting is defined, so the two compare directly). The BMP180's absolute error is up to −4/+2 hPa, so check against a nearby airport's current altimeter setting (it is already reduced to sea level, so the airport's own elevation does not matter; only this station's does). Repeat on a few days and average, because METARs are hourly and rounded to 0.01 inHg (0.34 hPa). Defaults: 285.9 m (938 ft) and no correction (Nov 6 23:34: KARB 30.03 inHg ⇒ 982.93 hPa here; the sensor read 982.93). Saved in this browser.</div></details>
 </section>
 <section class="chartbox" style="margin-top:20px" aria-label="Battery">
 <div class="charthead"><h2>Battery</h2><div class="nav"><label style="flex-direction:row;align-items:center">Range <select id="batRange"><option value="21600">6 hours</option><option value="86400" selected>24 hours</option><option value="259200">3 days</option><option value="604800">7 days</option></select></label></div></div>
@@ -517,8 +517,8 @@ $('maintBtn').onclick=async()=>{
  catch(e){$('error').textContent=`Cannot change maintenance: ${e.message}`;}
 };
 // ---- Pressure and temperature (W7+, BMP180) ----
-// Defaults: station at KARB's field elevation; correction from one altimeter comparison (Nov 6).
-const ALT_DEFAULT=256, POFF_DEFAULT=3.5;
+// Defaults: station elevation 938 ft; no correction needed (Nov 6: sensor matched KARB's altimeter setting to 0.01 hPa).
+const ALT_DEFAULT=285.9, POFF_DEFAULT=0;
 let wxRange=259200, wxPoints=[], wxFetched=0, wxGen=0, altitude=ALT_DEFAULT, pOffset=POFF_DEFAULT, tUnits='C';
 try{const w=JSON.parse(localStorage.getItem('wxSettings'));if(w){if([21600,86400,259200,604800,1209600,2592000].includes(w.range))wxRange=w.range;
  if(Number.isFinite(w.altitude)&&w.altitude>=-500&&w.altitude<=9000)altitude=w.altitude;if(Number.isFinite(w.pOffset)&&Math.abs(w.pOffset)<=20)pOffset=w.pOffset;if(['C','F'].includes(w.tUnits))tUnits=w.tUnits;}}catch(e){}
