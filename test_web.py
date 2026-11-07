@@ -4,7 +4,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from http.server import ThreadingHTTPServer
 from monitor import decode
@@ -166,6 +166,71 @@ class WebTests(unittest.TestCase):
         self.assertIsNone(self.store.latest['hz'])
         self.assertEqual(self.store.query(after=0)['points'], [])
 
+    def test_maintenance_hides_samples_and_tips(self):
+        now = 1_800_000_000.0
+        # packet(revs) completes a 1 s revolution 328/32768 s before reception.
+        self.store.accept(packet(revs=1, seq=1, uptime=100000), now)
+        self.store.maintenance('start', 'takedown', now=now + 100)
+        self.store.accept(packet(revs=2, seq=2, uptime=200000), now + 200)            # inside
+        self.store.maintenance('stop', now=now + 300)
+        self.store.maintenance('stop', now=now + 310)                                   # no-op
+        self.store.accept(packet(revs=3, seq=3, uptime=300000), now + 300.5)          # revolution overlaps the end
+        self.store.accept(packet(revs=4, seq=4, uptime=400000), now + 400)            # after
+        self.assertEqual(len(self.store.db.execute('SELECT * FROM samples').fetchall()), 4)  # all recorded
+        shown = [p['revs'] for p in self.store.query(start=now - 10, end=now + 1000)['points']]
+        self.assertEqual(shown, ['1', '4'])
+        live = self.store.query(after=0)
+        self.assertEqual([p['revs'] for p in live['points']], ['1', '4'])
+        self.assertNotIn('ok', live['points'][0])
+        self.assertEqual(live['cursor'], self.store.db.execute('SELECT MAX(id) FROM samples').fetchone()[0])
+        self.assertEqual(sum(b['n'] for b in self.store.condensed(now - 10, now + 1000, 100, 20)['buckets']), 2)
+        windows = self.store.status()['maintenance']
+        self.assertEqual([(w['start'], w['end'], w['note']) for w in windows if w['start'] == now + 100],
+                         [(now + 100, now + 300, 'takedown')])
+        with self.assertRaises(ValueError):
+            self.store.maintenance('pause')
+
+    def test_maintenance_excludes_rain(self):
+        now = 1_800_000_000.0
+        self.w5(1, 0, received=now)
+        self.w5(2, 1, received=now + 10)
+        self.store.maintenance('start', now=now + 50)
+        self.assertIsNotNone(self.store.status()['maintenance_active'])
+        self.w5(3, 6, interval=32768, received=now + 60)        # handling: 5 tips
+        self.store.maintenance('stop', now=now + 70)
+        self.w5(4, 7, interval=32768, received=now + 80)
+        self.assertIsNone(self.store.status()['maintenance_active'])
+        self.assertEqual(sum(r['added'] for r in self.store.rain(now, now + 100)['tips']), 2)
+        total = self.store.rain_total(now, now + 100)
+        self.assertEqual(total['tips'], 2)
+        self.assertEqual(len(total['maintenance']), 1)
+        self.assertEqual(self.store.rain_total(now + 75, now + 100)['maintenance'], [])
+
+    def test_maint_cli(self):
+        import maint
+        now = time.time()
+        db = Path(self.temp.name) / 'history.db'
+        self.w5(1, 0, received=now - 600)
+        self.w5(2, 3, interval=32768, received=now - 300)
+        self.store.db.commit()
+        stamp = lambda t: time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(t))
+        maint.main(['--db', str(db), 'add', stamp(now - 400), stamp(now - 200), '--note', 'bench'])
+        self.assertEqual(self.store.rain_total(now - 1000, now)['tips'], 0)
+        wid = self.store.windows()[0]['id']
+        maint.main(['--db', str(db), 'remove', str(wid)])
+        self.assertEqual(self.store.rain_total(now - 1000, now)['tips'], 3)
+        maint.main(['--db', str(db), 'purge', stamp(now - 400), stamp(now - 200), '--yes'])
+        self.assertEqual(self.store.rain_total(now - 1000, now)['tips'], 0)
+        self.assertEqual(len(self.store.db.execute('SELECT * FROM packets').fetchall()), 1)
+        backups = list((Path(self.temp.name) / 'backups').glob('*.sqlite3'))
+        self.assertEqual(len(backups), 1)
+        copy = __import__('sqlite3').connect(str(backups[0]))
+        self.assertEqual(copy.execute('SELECT COUNT(*) FROM packets').fetchone()[0], 2)
+        copy.close()
+        self.assertAlmostEqual(maint.when('now'), time.time(), delta=2)
+        with self.assertRaises(SystemExit):
+            maint.main(['--db', str(db), 'add', stamp(now - 100), stamp(now - 200)])
+
     def test_http(self):
         self.store.accept(packet())
         server = ThreadingHTTPServer(('127.0.0.1',0), handler_for(self.store))
@@ -188,6 +253,16 @@ class WebTests(unittest.TestCase):
                 self.assertEqual(json.load(response)['tips'], [])
             with urlopen(base+'/api/history?start=0&end=86400&bucket=120&calm=20') as response:
                 self.assertEqual(json.load(response)['buckets'], [])
+            post = lambda body, kind='application/json': urlopen(Request(
+                base + '/api/maintenance', data=body, headers={'Content-Type': kind}, method='POST'))
+            with post(b'{"action":"start","note":"test"}') as response:
+                self.assertEqual(json.load(response)['maintenance_active']['note'], 'test')
+            with post(b'{"action":"stop"}') as response:
+                self.assertIsNone(json.load(response)['maintenance_active'])
+            for body, kind in ((b'action=start', 'application/x-www-form-urlencoded'), (b'{"action":"x"}', 'application/json'),
+                               (b'[]', 'application/json'), (b'{"action":"start","note":5}', 'application/json')):
+                with self.assertRaises(HTTPError):
+                    post(body, kind)
             for query in ('/api/rain/total?start=x', '/api/rain/total?start=5&end=1', '/api/rain?start=0', '/api/rain?start=0&end=9999999', '/api/history?start=nan&end=1',
                           '/api/history?start=0&end=86400&bucket=0.5', '/api/history?start=0&end=86400', '/api/history?start=0&end=50000', '/api/live?after=-1', '/../../etc/passwd'):
                 with self.assertRaises(HTTPError):

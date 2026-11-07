@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LAN anemometer dashboard: one serial reader, SQLite history, read-only HTTP API."""
+"""LAN anemometer dashboard: one serial reader, SQLite history, HTTP API (read-only except maintenance)."""
 import argparse
 import json
 import math
@@ -17,6 +17,12 @@ ROOT = Path(__file__).resolve().parent
 RETENTION = 7 * 86400
 RAIN_RETENTION = 400 * 86400  # rain rows are tiny; keep over a year of daily totals
 GAP = 3600  # no packet for this long is recorded as a data gap
+# Maintenance windows (takedown, bench tests): data is still recorded, but graphs and rain
+# totals leave out samples whose revolution overlaps a window and tips inside one.
+# end NULL = in progress.
+IN_WINDOW = ('EXISTS (SELECT 1 FROM maintenance m WHERE {lo} < COALESCE(m.end, 1e18) AND {hi} >= m.start)')
+SAMPLE_OK = 'NOT ' + IN_WINDOW.format(lo='t - period', hi='t')
+TIP_OK = 'NOT ' + IN_WINDOW.format(lo='t', hi='t')
 
 
 class Store:
@@ -56,6 +62,8 @@ class Store:
             session TEXT PRIMARY KEY, version TEXT NOT NULL, first_t REAL NOT NULL, last_t REAL NOT NULL);
           CREATE TABLE IF NOT EXISTS gaps (start REAL NOT NULL, end REAL NOT NULL);
           CREATE INDEX IF NOT EXISTS gap_time ON gaps(start);
+          CREATE TABLE IF NOT EXISTS maintenance (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, start REAL NOT NULL, end REAL, note TEXT NOT NULL DEFAULT '');
         ''')
         if not self.db.execute('SELECT 1 FROM runs LIMIT 1').fetchone():
             self.backfill_runs()
@@ -162,9 +170,33 @@ class Store:
                 self.last_prune = received
             self.db.commit()
 
+    def windows(self, since=None):
+        """Maintenance windows ending after `since` (default: the last 14 days), oldest first."""
+        since = time.time() - 14 * 86400 if since is None else since
+        with self.lock:
+            return [dict(r) for r in self.db.execute(
+                'SELECT id, start, end, note FROM maintenance WHERE COALESCE(end, 1e18) > ? '
+                'ORDER BY start LIMIT 200', (since,))]
+
+    def maintenance(self, action, note='', now=None):
+        """Start or stop a window now (dashboard). Retroactive edits are in maint.py."""
+        now = time.time() if now is None else now
+        with self.lock:
+            open_ = self.db.execute('SELECT id FROM maintenance WHERE end IS NULL').fetchone()
+            if action == 'start' and not open_:
+                self.db.execute('INSERT INTO maintenance(start, note) VALUES(?, ?)', (now, note[:200]))
+            elif action == 'stop' and open_:
+                self.db.execute('UPDATE maintenance SET end=? WHERE id=?', (now, open_[0]))
+            elif action not in ('start', 'stop'):
+                raise ValueError('unknown maintenance action')
+            self.db.commit()
+            return self.status()
+
     def status(self):
+        windows = self.windows()
         return dict(connected=self.connected, error=self.error, latest=self.latest,
-                    last_serial=self.last_serial, malformed=self.malformed, now=time.time())
+                    last_serial=self.last_serial, malformed=self.malformed, now=time.time(),
+                    maintenance=windows, maintenance_active=next((w for w in windows if w['end'] is None), None))
 
     def condensed(self, start, end, bucket, calm):
         """Long ranges: per time bucket, the slowest and fastest real samples (so extremes and
@@ -173,7 +205,7 @@ class Store:
         (each half longer than `calm` seconds contributes half - calm)."""
         with self.lock:
             cursor = self.db.execute('SELECT COALESCE(MAX(id),0) FROM samples').fetchone()[0]
-            base = 'SELECT *, CAST((t - :s) / :b AS INTEGER) AS bk FROM samples WHERE t >= :s AND t < :e'
+            base = f'SELECT *, CAST((t - :s) / :b AS INTEGER) AS bk FROM samples WHERE t >= :s AND t < :e AND {SAMPLE_OK}'
             args = dict(s=start, e=end, b=bucket, c=calm)
             rows = self.db.execute(
                 f'SELECT id,t,stream,hz,period,a,b,imbalance,revs,pulses FROM ('
@@ -191,11 +223,14 @@ class Store:
         with self.lock:
             cursor = self.db.execute('SELECT COALESCE(MAX(id),0) FROM samples').fetchone()[0]
             if after is not None:
-                rows = self.db.execute('SELECT * FROM samples WHERE id > ? ORDER BY id LIMIT 2000', (after,)).fetchall()
+                rows = self.db.execute(f'SELECT *, {SAMPLE_OK} AS ok FROM samples WHERE id > ? ORDER BY id LIMIT 2000',
+                                       (after,)).fetchall()
                 if rows:
-                    cursor = rows[-1]['id']
+                    cursor = rows[-1]['id']  # the cursor passes excluded rows too
+                rows = [{k: r[k] for k in r.keys() if k != 'ok'} for r in rows if r['ok']]
             else:
-                rows = self.db.execute('SELECT * FROM samples WHERE t >= ? AND t < ? ORDER BY t LIMIT 60000', (start, end)).fetchall()
+                rows = self.db.execute(f'SELECT * FROM samples WHERE t >= ? AND t < ? AND {SAMPLE_OK} ORDER BY t LIMIT 60000',
+                                       (start, end)).fetchall()
             return dict(self.status(), cursor=cursor, points=[dict(row) for row in rows])
 
     def battery(self, start, end, bucket):
@@ -213,7 +248,7 @@ class Store:
         sensor run, since counts are cumulative), and when rain logging (W5+) begins."""
         with self.lock:
             tips, first, last = self.db.execute(
-                'SELECT COALESCE(SUM(added),0), MIN(t), MAX(t) FROM rain WHERE t >= ? AND t < ?',
+                f'SELECT COALESCE(SUM(added),0), MIN(t), MAX(t) FROM rain WHERE t >= ? AND t < ? AND {TIP_OK}',
                 (start, end)).fetchone()
             restarts = [r[0] for r in self.db.execute(
                 'SELECT first_t FROM runs WHERE first_t > ? AND first_t < ? '
@@ -221,13 +256,15 @@ class Store:
             gaps = [dict(start=a, end=b) for a, b in self.db.execute(
                 'SELECT start, end FROM gaps WHERE end > ? AND start < ? ORDER BY start', (start, end))]
             since = self.db.execute("SELECT MIN(first_t) FROM runs WHERE version >= 'W5'").fetchone()[0]
+            excluded = [w for w in self.windows(start) if w['start'] < end]
             return dict(start=start, end=end, tips=tips, first_tip=first, last_tip=last,
-                        restarts=restarts, gaps=gaps, rain_logging_since=since, now=time.time())
+                        restarts=restarts, gaps=gaps, rain_logging_since=since, maintenance=excluded,
+                        now=time.time())
 
     def rain(self, start, end):
         """Tip rows in [start, end); the browser applies mm/tip calibration and local midnights."""
         with self.lock:
-            rows = self.db.execute('SELECT t, added, interval FROM rain WHERE t >= ? AND t < ? ORDER BY t',
+            rows = self.db.execute(f'SELECT t, added, interval FROM rain WHERE t >= ? AND t < ? AND {TIP_OK} ORDER BY t',
                                    (start, end)).fetchall()
             return dict(self.status(), tips=[dict(row) for row in rows])
 
@@ -267,6 +304,40 @@ def serial_worker(store, port, stop):
 
 def handler_for(store):
     class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            # The only write: start/stop a maintenance window. Requiring a JSON body means a
+            # cross-site page cannot send it without a CORS preflight, which is never granted.
+            if urlsplit(self.path).path != '/api/maintenance':
+                self.send_error(404)
+                return
+            try:
+                if self.headers.get('Content-Type', '').split(';')[0].strip() != 'application/json':
+                    raise ValueError('JSON body required')
+                length = int(self.headers.get('Content-Length', '0'))
+                if not 0 < length <= 1000:
+                    raise ValueError('bad length')
+                request = json.loads(self.rfile.read(length))
+                note = request.get('note') or ''
+                if not isinstance(note, str):
+                    raise ValueError('note must be text')
+                body = json.dumps(store.maintenance(request.get('action'), note), allow_nan=False).encode()
+            except (ValueError, TypeError, AttributeError):
+                self.send_error(400, 'Invalid maintenance request')
+                return
+            self.reply(body, 'application/json')
+
+        def reply(self, body, kind):
+            self.send_response(200)
+            self.send_header('Content-Type', kind)
+            self.send_header('Content-Length', str(len(body)))
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
         def do_GET(self):
             url = urlsplit(self.path)
             try:
@@ -332,16 +403,7 @@ def handler_for(store):
             except (ValueError, OverflowError, KeyError):
                 self.send_error(400, 'Invalid query parameters')
                 return
-            self.send_response(200)
-            self.send_header('Content-Type', kind)
-            self.send_header('Content-Length', str(len(body)))
-            self.send_header('Cache-Control', 'no-store')
-            self.send_header('X-Content-Type-Options', 'nosniff')
-            self.end_headers()
-            try:
-                self.wfile.write(body)
-            except (BrokenPipeError, ConnectionResetError):
-                pass
+            self.reply(body, kind)
 
         def log_message(self, *args):
             pass
@@ -360,7 +422,7 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), handler_for(store))
     stop = threading.Event()
     threading.Thread(target=serial_worker, args=(store, args.serial, stop), daemon=True).start()
-    print(f'Dashboard: http://{args.host}:{args.port} (LAN, unauthenticated/read-only)', flush=True)
+    print(f'Dashboard: http://{args.host}:{args.port} (LAN, unauthenticated; the only write is maintenance start/stop)', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

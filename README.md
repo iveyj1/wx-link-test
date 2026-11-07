@@ -36,6 +36,7 @@ Radio: 915 MHz, SF7, BW 500 kHz, CR 4/5, preamble 12, network 18, 2 dBm (configu
 | `link/Diagnostics.h`, `retained.ld` | Execution-stage breadcrumb kept in `.noinit` RAM across resets |
 | `monitor.py` | Packet decoder (W1–W5) and terminal monitor |
 | `web_server.py` | Serial reader, SQLite store, HTTP API, static dashboard |
+| `maint.py` | Maintenance windows and backed-up data purges (CLI) |
 | `web/index.html`, `web/math.js` | Dashboard (no external JS/CSS) |
 | `deploy/anemometer-web.service` | systemd user unit for the dashboard |
 | `test_*.cpp`, `test_*.py`, `test_display.js` | Native, Python and JS tests |
@@ -66,7 +67,7 @@ systemctl --user daemon-reload && systemctl --user enable --now anemometer-web
 journalctl --user -u anemometer-web -f
 ```
 
-Serves `http://<host>:8765/` on all interfaces, read-only, **without authentication or TLS**: trusted LAN only. The service owns the receiver port; stop it before running `python monitor.py`. History is in `data/wind.sqlite3` (not in git):
+Serves `http://<host>:8765/` on all interfaces, **without authentication or TLS**, read-only except starting/stopping maintenance: trusted LAN only. The service owns the receiver port; stop it before running `python monitor.py`. History is in `data/wind.sqlite3` (not in git):
 
 | Table | Contents | Retention |
 |---|---|---|
@@ -75,9 +76,20 @@ Serves `http://<host>:8765/` on all interfaces, read-only, **without authenticat
 | `rain` | One row per packet whose tip count rose (`added` new tips) | 400 days |
 | `runs` | One row per sensor run (session, version, first/last packet): restart warnings | 400 days |
 | `gaps` | Stretches of more than 1 h without packets | 400 days |
+| `maintenance` | Maintenance windows (start, end or NULL while open, note) | kept |
 | `state` | Latest decoded packet | — |
 
-API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bucket=<s>&calm=20`, condensed, ≤ 12 days), `/api/rain?start=&end=` (≤ 32 days), `/api/rain/total?start=&end=` (tip sum with restarts, gaps and rain-logging start). No `sqlite3` CLI is installed here; query with Python.
+API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bucket=<s>&calm=20`, condensed, ≤ 12 days), `/api/rain?start=&end=` (≤ 32 days), `/api/rain/total?start=&end=` (tip sum with restarts, gaps, maintenance windows and rain-logging start), `POST /api/maintenance` with JSON `{"action":"start"|"stop","note":…}` (JSON required, so another site can't trigger it). No `sqlite3` CLI is installed here; query with Python.
+
+## Maintenance, testing and downtime
+
+Handling can't be told apart from weather afterwards: lowering the mast spins the cups, and tipping the gauge while carrying it in looks like a downpour (15 tips in 4 min = 83 mm/h). The system has to be told instead.
+
+* **Before touching the sensor**, press **Start maintenance** on the dashboard (or `./maint.py start --note takedown`). Everything is still recorded, but wind samples whose revolution overlaps the window, and tips inside it, are left out of graphs, strip averages, the live cards and every rain total. The window is shaded on the charts. Press **End maintenance** once the sensor is back in service. Bench tests and reflashing belong inside a window too.
+* **Forgot?** Record it afterwards: `./maint.py add "2026-11-06 21:08" "21:30"` (or `open`). `list`, `end ID TIME` and `remove ID` adjust windows; removing one shows its data again. The takedown signature in `packets` is RSSI falling from its usual level (about −88 dBm at the mast) and then jumping to around −30 dBm indoors, plus a burst of rain tips.
+* **Purge** only for data that should never count, such as a test against the wrong database: `./maint.py purge FROM TO` writes a consistent backup (SQLite backup API, which includes the WAL) to `data/backups/` first, then deletes `samples`, `packets` and `rain` rows in the range. Copying `wind.sqlite3` alone is not a backup while the service runs: recent writes are in `wind.sqlite3-wal`.
+* Outages need no action: gaps over 1 h are recorded, shown as no data, and flagged on rain totals. A new sensor boot starts a new session, so the cumulative tip count restarts cleanly.
+* Tape or wedge the rain bucket before moving the gauge.
 
 ## Measurement design
 
