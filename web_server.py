@@ -192,11 +192,30 @@ class Store:
             self.db.commit()
             return self.status()
 
+    def link(self, now=None):
+        """Radio link quality over the last hour and day, cached for 20 s (polled every second).
+        Missing = sequence numbers skipped within each sensor session (lost packets)."""
+        now = time.time() if now is None else now
+        cached = getattr(self, '_link', None)
+        if cached and now - cached[0] < 20:
+            return cached[1]
+        result = {}
+        with self.lock:
+            for name, span in (('h1', 3600), ('h24', 86400)):
+                received, missing = self.db.execute(
+                    'SELECT COALESCE(SUM(n),0), COALESCE(SUM(hi-lo+1-n),0) FROM (SELECT COUNT(DISTINCT seq) AS n, '
+                    'MIN(seq) AS lo, MAX(seq) AS hi FROM packets WHERE t >= ? GROUP BY session)', (now - span,)).fetchone()
+                rssi, rssi_min, snr, snr_min = self.db.execute(
+                    'SELECT AVG(rssi), MIN(rssi), AVG(snr), MIN(snr) FROM packets WHERE t >= ?', (now - span,)).fetchone()
+                result[name] = dict(received=received, missing=missing, rssi=rssi, rssi_min=rssi_min, snr=snr, snr_min=snr_min)
+        self._link = (now, result)
+        return result
+
     def status(self):
         windows = self.windows()
         return dict(connected=self.connected, error=self.error, latest=self.latest,
                     last_serial=self.last_serial, malformed=self.malformed, now=time.time(),
-                    maintenance=windows, maintenance_active=next((w for w in windows if w['end'] is None), None))
+                    link=self.link(), maintenance=windows, maintenance_active=next((w for w in windows if w['end'] is None), None))
 
     def condensed(self, start, end, bucket, calm):
         """Long ranges: per time bucket, the slowest and fastest real samples (so extremes and

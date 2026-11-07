@@ -206,6 +206,16 @@ class WebTests(unittest.TestCase):
         self.assertEqual(len(total['maintenance']), 1)
         self.assertEqual(self.store.rain_total(now + 75, now + 100)['maintenance'], [])
 
+    def test_link_statistics(self):
+        now = time.time()
+        for seq in (1, 2, 5, 5, 6):                                   # 3 and 4 lost; 5 duplicated
+            self.store.accept(packet(revs=seq, seq=seq, uptime=100000 * seq), now - 100 + seq)
+        self.store.accept(packet(revs=1, seq=1, session='ffffffff', uptime=1000), now - 50)  # new session
+        link = self.store.link(now)['h1']
+        self.assertEqual((link['received'], link['missing']), (5, 2))
+        self.assertEqual(link['rssi'], -28)
+        self.assertIs(self.store.link(now + 5), self.store.link(now + 5))   # cached
+
     def test_maint_cli(self):
         import maint
         now = time.time()
