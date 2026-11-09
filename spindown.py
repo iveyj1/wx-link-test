@@ -3,7 +3,10 @@
 
 Spin the rotor by hand, let it stop completely, wait ~20 s, repeat. Each completed
 revolution with period <= --max-period becomes a speed point (f = 1/period, at the middle
-of that revolution). Spins starting below --min-start (1.5 rev/s) are ignored as wind. A spin ends at a stop (a revolution longer than --max-period, or no
+of that revolution). Spins starting below --min-start (1.5 rev/s) are ignored as wind; revolutions up to one
+after the last speed-up (still being pushed) and lopsided ones spanning a stop (|imbalance| >= 40%) are dropped.
+The fit uses speeds >= --fit-min (default 0.2 rev/s): the last creeping revolutions are
+dominated by the magnet and by slowing within a single revolution. A spin ends at a stop (a revolution longer than --max-period, or no
 revolution for --gap s) or at a re-spin (speed jumps up).
 
 Model: df/dt = -a - b*f^2 (f in rev/s). a = constant (Coulomb) friction deceleration in
@@ -30,9 +33,9 @@ from maint import DB, show, when
 
 
 def load(db, start, end):
-    rows = db.execute('SELECT t, stream, period, revs, pulses FROM samples WHERE t >= ? AND t < ? ORDER BY t',
+    rows = db.execute('SELECT t, stream, period, revs, pulses, imbalance FROM samples WHERE t >= ? AND t < ? ORDER BY t',
                       (start, end)).fetchall()
-    return [dict(t=t, stream=s, period=p, revs=int(r), pulses=int(q)) for t, s, p, r, q in rows]
+    return [dict(t=t, stream=s, period=p, revs=int(r), pulses=int(q), imbalance=i) for t, s, p, r, q, i in rows]
 
 
 def split(samples, max_period, gap, jump):
@@ -46,7 +49,8 @@ def split(samples, max_period, gap, jump):
             if len(cur) >= 3:
                 spins.append(cur)
             cur = []
-        if s['period'] <= max_period:
+        # A revolution spanning a stop and a new push has one long and one short half.
+        if s['period'] <= max_period and abs(s['imbalance']) < 40:
             cur.append(s)
     if len(cur) >= 3:
         spins.append(cur)
@@ -74,11 +78,21 @@ def crossing(points, level):
     return None
 
 
-def analyse(spin, db, hi, lo, until):
+def coast(spin):
+    """The free coast: from one revolution after the last speed-up. The hand is still on the
+    rotor around the peak (608ZZ test, Nov 9: re-pushes and a slow first step after the peak)."""
+    f = [1 / s['period'] for s in spin]
+    last_up = max([i for i in range(1, len(f)) if f[i] > f[i - 1]], default=0)
+    return spin[last_up + 1:] if len(spin) - last_up - 1 >= 3 else spin[last_up:]
+
+
+def analyse(spin, db, hi, lo, until, fit_min=0.0):
+    spin = coast(spin)
     # Speed point: average over the revolution that just completed, placed at its middle.
     pts = [(s['t'] - s['period'] / 2, s['revs'] - 0.5, 1 / s['period']) for s in spin]
     xs, ys, ws = [], [], []
-    for (_, n1, f1), (_, n2, f2) in zip(pts, pts[1:]):
+    fit = [p for p in pts if p[2] >= fit_min]
+    for (_, n1, f1), (_, n2, f2) in zip(fit, fit[1:]):
         dn = n2 - n1
         xs.append((f1 * f1 + f2 * f2) / 2); ys.append((f2 * f2 - f1 * f1) / dn); ws.append(dn)
     c0, c1, r2 = linfit(xs, ys, ws)
@@ -112,17 +126,18 @@ def main(argv=None):
     p.add_argument('--max-period', type=float, default=10.0, help='longer revolutions count as stopped (s)')
     p.add_argument('--gap', type=float, default=20.0, help='no revolution for this long ends a spin (s)')
     p.add_argument('--min-start', type=float, default=1.5, help='ignore spins starting slower (wind), rev/s (default 1.5)')
+    p.add_argument('--fit-min', type=float, default=0.2, help='fit only speeds at or above this, rev/s (default 0.2)')
     p.add_argument('--csv', type=Path, help='write every speed point here')
     args = p.parse_args(argv)
     db = sqlite3.connect(f'file:{args.db}?mode=ro', uri=True)
     spins = [s for s in split(load(db, args.since, args.until), args.max_period, args.gap, jump=1.3)
-             if 1 / s[0]['period'] >= args.min_start]
+             if max(1 / x['period'] for x in s) >= args.min_start]
     if not spins:
         sys.exit(f'No spins between {show(args.since)} and {show(args.until)}.')
     results = []
     for i, spin in enumerate(spins):
         nxt = spins[i + 1][0]['t'] - spins[i + 1][0]['period'] if i + 1 < len(spins) else args.until
-        results.append(analyse(spin, db, args.hi, args.lo, nxt))
+        results.append(analyse(spin, db, args.hi, args.lo, nxt, args.fit_min))
     title = f' · {args.label}' if args.label else ''
     print(f'Spins {show(args.since)} → {show(args.until)}{title}')
     print(f'  #  start     f0 Hz  revs(+½) dur s   a rev/s²  b 1/rev   R²   pts  {args.hi:g}→{args.lo:g} Hz s  revs {args.hi:g} Hz→stop')
