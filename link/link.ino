@@ -10,7 +10,7 @@
 #define SENSOR 1
 #endif
 
-#define FIRMWARE "W8-standby4"
+#define FIRMWARE "W8-standby5"
 constexpr uint32_t HZ = 32768;
 constexpr uint8_t REED = 5;
 constexpr uint8_t VBAT = A7; // = D9: battery through the Feather's 1:2 divider (do not use D9 otherwise)
@@ -670,7 +670,12 @@ void setup() {
   traceRecord.session = session;
   wdtBegin();
   delay(1500);
-  usbLive = usbHostActive();
+  // Look for a USB host for up to 10 s: after a flash this host takes several seconds to
+  // re-enumerate, and a sensor that guesses "battery" and enters deep standby can't be
+  // enumerated at all. On battery this costs 10 s of light sleep per boot.
+  for (uint32_t t0 = millis(); !(usbLive = usbHostActive()) && millis() - t0 < 10000; ) {
+    wdtKick(); delay(100);
+  }
   updateSleepMode();
   logLine(SENSOR ? "# SENSOR wind D5, rain D10 (each closure = 1 tip); 32768 ticks/s; debounce=328 ticks" : "# RECEIVER address2; 915MHz SF7 BW500 CR4/5 2dBm");
   radioOK = configureRadio();
