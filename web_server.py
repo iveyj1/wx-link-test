@@ -12,6 +12,7 @@ from urllib.parse import urlsplit, parse_qs
 
 import serial
 from monitor import RECEIVER, HZ, UNKNOWN, decode
+import spindown
 
 ROOT = Path(__file__).resolve().parent
 RETENTION = 7 * 86400
@@ -31,6 +32,7 @@ class Store:
     def __init__(self, path):
         self.lock = threading.RLock()
         self.db = sqlite3.connect(str(path), check_same_thread=False)
+        self.path = Path(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript('''
@@ -395,6 +397,18 @@ def handler_for(store):
                 if url.path in ('/', '/index.html'):
                     body = (ROOT / 'web' / 'index.html').read_bytes()
                     kind = 'text/html; charset=utf-8'
+                elif url.path == '/spindown.html':
+                    body = (ROOT / 'web' / 'spindown.html').read_bytes()
+                    kind = 'text/html; charset=utf-8'
+                elif url.path == '/api/spindown':
+                    # Bearing spin-down tests: sets from spindown_sets.json, analysed on a
+                    # separate read-only connection (it does not hold the store lock).
+                    ro = sqlite3.connect(f'file:{store.path}?mode=ro', uri=True, timeout=10)
+                    try:
+                        body = json.dumps(spindown.report(ro), allow_nan=False).encode()
+                    finally:
+                        ro.close()
+                    kind = 'application/json'
                 elif url.path == '/math.js':
                     body = (ROOT / 'web' / 'math.js').read_bytes()
                     kind = 'text/javascript; charset=utf-8'

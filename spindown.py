@@ -24,13 +24,19 @@ database, including samples hidden by a maintenance window.
 """
 import argparse
 import csv
+import json
 import math
 import sqlite3
 import statistics
 import sys
 from pathlib import Path
 
-from maint import DB, show, when
+from maint import DB, ROOT, show, when
+
+# Test sets shown on the dashboard's spin-down page (/spindown.html): one entry per bearing
+# run, {"label", "start", "end", "note", "reference"}; times local "YYYY-MM-DD HH:MM[:SS]".
+SETS = ROOT / 'spindown_sets.json'
+DEFAULTS = dict(hi=2.0, lo=0.5, max_period=10.0, gap=20.0, min_start=1.5, fit_min=0.2)
 
 
 def load(db, start, end):
@@ -96,6 +102,7 @@ def analyse(spin, db, hi, lo, until, fit_min=0.0):
     for (_, n1, f1), (_, n2, f2) in zip(fit, fit[1:]):
         dn = n2 - n1
         xs.append((f1 * f1 + f2 * f2) / 2); ys.append((f2 * f2 - f1 * f1) / dn); ws.append(dn)
+    pairs = [dict(x=x, y=y, w=w) for x, y, w in zip(xs, ys, ws)]
     c0, c1, r2 = linfit(xs, ys, ws)
     first, last = spin[0], spin[-1]
     start = first['t'] - first['period']
@@ -109,7 +116,43 @@ def analyse(spin, db, hi, lo, until, fit_min=0.0):
     return dict(start=start, f0=pts[0][2], f_end=pts[-1][2], revs=last['revs'] - first['revs'] + 1,
                 extra_half=extra, duration=last['t'] - start, a=-c0 / 2, b=-c1 / 2, r2=r2, n=len(pts),
                 coast=down[0] - up[0] if up and down else None,
-                revs_hi=last['revs'] - up[1] + extra / 2 if up else None, points=pts)
+                revs_hi=last['revs'] - up[1] + extra / 2 if up else None, points=pts, pairs=pairs)
+
+
+def analyse_range(db, start, end, hi=2.0, lo=0.5, max_period=10.0, gap=20.0, min_start=1.5, fit_min=0.2):
+    """Every spin in [start, end), analysed."""
+    spins = [s for s in split(load(db, start, end), max_period, gap, jump=1.3)
+             if max(1 / x['period'] for x in s) >= min_start]
+    results = []
+    for i, spin in enumerate(spins):
+        nxt = spins[i + 1][0]['t'] - spins[i + 1][0]['period'] if i + 1 < len(spins) else end
+        results.append(analyse(spin, db, hi, lo, nxt, fit_min))
+    return results
+
+
+def stats(results, key):
+    v = [r[key] for r in results if r[key] is not None and not math.isnan(r[key])]
+    return dict(mean=statistics.mean(v) if v else None, sd=statistics.stdev(v) if len(v) > 1 else None, n=len(v))
+
+
+def report(db, sets_path=SETS):
+    """JSON-ready analysis of every configured test set (dashboard /api/spindown)."""
+    sets = json.loads(sets_path.read_text()) if sets_path.exists() else []
+    out = []
+    for cfg in sets:
+        start, end = when(cfg['start']), when(cfg['end'])
+        results = analyse_range(db, start, end, **DEFAULTS)
+        spins = []
+        for r in results:
+            t0, n0 = r['points'][0][0], r['points'][0][1]
+            spins.append(dict({k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in r.items()
+                               if k not in ('points', 'pairs')},
+                              points=[[round(t - t0, 3), round(n - n0, 1), round(f, 5)] for t, n, f in r['points']],
+                              pairs=[[round(q['x'], 5), round(q['y'], 5), q['w']] for q in r['pairs']]))
+        out.append(dict(label=cfg['label'], note=cfg.get('note', ''), reference=bool(cfg.get('reference')),
+                        start=start, end=end, spins=spins,
+                        summary={k: stats(results, k) for k in ('a', 'b', 'coast', 'revs_hi', 'f0', 'duration')}))
+    return dict(sets=out, settings=DEFAULTS)
 
 
 def fmt(v, spec):
@@ -131,14 +174,10 @@ def main(argv=None):
     p.add_argument('--csv', type=Path, help='write every speed point here')
     args = p.parse_args(argv)
     db = sqlite3.connect(f'file:{args.db}?mode=ro', uri=True)
-    spins = [s for s in split(load(db, args.since, args.until), args.max_period, args.gap, jump=1.3)
-             if max(1 / x['period'] for x in s) >= args.min_start]
-    if not spins:
+    results = analyse_range(db, args.since, args.until, args.hi, args.lo, args.max_period, args.gap,
+                            args.min_start, args.fit_min)
+    if not results:
         sys.exit(f'No spins between {show(args.since)} and {show(args.until)}.')
-    results = []
-    for i, spin in enumerate(spins):
-        nxt = spins[i + 1][0]['t'] - spins[i + 1][0]['period'] if i + 1 < len(spins) else args.until
-        results.append(analyse(spin, db, args.hi, args.lo, nxt, args.fit_min))
     title = f' · {args.label}' if args.label else ''
     print(f'Spins {show(args.since)} → {show(args.until)}{title}')
     print(f'  #  start     f0 Hz  revs(+½) dur s   a rev/s²  b 1/rev   R²   pts  {args.hi:g}→{args.lo:g} Hz s  revs {args.hi:g} Hz→stop')

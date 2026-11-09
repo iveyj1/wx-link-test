@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bearing Spin-Down</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%2370e8c2' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%2370e8c2'/%3E%3C/svg%3E">
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0c1520;color:#e6eef6;
+ --surface:#101e2b;--card:#142230;--border:#294053;--text:#e6eef6;--text2:#b7c6d3;--muted:#9cafbf;--grid:#22384a;--axis:#4a6378;--accent:#70e8c2;
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#9085e9}
+*{box-sizing:border-box}body{margin:0;background:#0c1520}
+main{max-width:1200px;margin:auto;padding:24px 16px 60px}
+header{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+h1{font-size:24px;margin:0}h2{font-size:17px;margin:0 0 4px}h3{font-size:15px;margin:18px 0 6px}
+.eyebrow{font-size:12px;letter-spacing:2px;color:#78a9c6;text-transform:uppercase}
+a{color:var(--accent)}p,li{color:var(--text2);line-height:1.55;max-width:78ch}
+.caption{font-size:12px;color:var(--muted)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin:20px 0}
+.card{background:var(--card);border:1px solid #253b4e;border-radius:12px;padding:16px;min-width:0}
+.card .label{display:flex;align-items:center;gap:8px;font-weight:600}
+.swatch{width:12px;height:12px;border-radius:3px;flex:none}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:10px 0 0;font-variant-numeric:tabular-nums}
+.kv dt{color:var(--muted);font-size:13px}.kv dd{margin:0;font-size:14px}
+.badge{font-size:11px;border:1px solid var(--accent);color:var(--accent);border-radius:10px;padding:1px 7px;font-weight:500}
+.chartbox{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin:16px 0;position:relative}
+.charthead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.filters{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:8px 0}
+.filters label{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--text2);cursor:pointer}
+.seg button{font:inherit;font-size:13px;color:var(--text);background:#152839;border:1px solid #39536a;padding:4px 10px;cursor:pointer}
+.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0;border-left:0}
+.seg button[aria-pressed=true]{background:#24425c;border-color:var(--accent)}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.grid3 .chartbox{margin:0}
+svg{display:block;width:100%;overflow:visible}
+svg text{fill:var(--muted);font-size:11px;font-family:system-ui,sans-serif}
+.tip{position:absolute;pointer-events:none;background:#0b1622;border:1px solid #3a556c;border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.45;color:var(--text);white-space:nowrap;z-index:5;box-shadow:0 4px 14px #0008}
+.tip b{font-weight:600}
+.eq{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b1622;border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:inline-block;margin:6px 0;color:var(--text);font-size:15px}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:5px 8px;border-bottom:1px solid #1f3446}th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500}
+details summary{cursor:pointer;color:var(--text2);margin:8px 0}
+.table-wrap{overflow-x:auto}
+.error{color:#e66767}
+</style>
+</head>
+<body><main>
+<header><div><div class="eyebrow">Anemometer · bearing tests</div><h1>Spin-down</h1></div><a href="/">← Dashboard</a></header>
+
+<p>The rotor is spun by hand indoors and left to coast to a stop. Fitting how it slows separates
+<b>bearing friction</b> from <b>drag on the cups</b>, so bearings can be compared even though every
+spin starts at a different speed.</p>
+
+<div class="filters" id="setFilters" aria-label="Test sets shown"></div>
+<section class="cards" id="summary" aria-label="Results per test set"></section>
+
+<section aria-label="Per-spin results">
+<div class="grid3">
+ <div class="chartbox"><div class="charthead"><h2>Bearing friction a</h2><span class="caption">rev/s² · lower = freer</span></div><svg id="stripA" role="img" aria-label="Friction a for each spin, by test set"></svg></div>
+ <div class="chartbox"><div class="charthead"><h2>Cup drag b</h2><span class="caption">1/rev</span></div><svg id="stripB" role="img" aria-label="Drag b for each spin, by test set"></svg></div>
+ <div class="chartbox"><div class="charthead"><h2>Coast 2 → 0.5 rev/s</h2><span class="caption">seconds · longer = freer</span></div><svg id="stripC" role="img" aria-label="Coast time for each spin, by test set"></svg></div>
+</div>
+<p class="caption">Each dot is one spin; the tick and bar are the set's mean ± 1 standard deviation.</p>
+</section>
+
+<section class="chartbox" aria-label="Speed during the coast">
+ <div class="charthead"><h2>Speed while coasting</h2>
+  <div class="seg" role="group" aria-label="Speed axis"><button id="linBtn" aria-pressed="true">Linear</button><button id="logBtn" aria-pressed="false">Log</button></div></div>
+ <div class="caption">Every spin, shifted in time so it sits on its set's fitted curve (dashed); 0 s = passing 2 rev/s. On the log axis, drag alone would bend gently and friction makes the tail plunge.</div>
+ <svg id="speed" role="img" aria-label="Speed against time for every spin with fitted model curves"></svg>
+</section>
+
+<section class="chartbox" aria-label="The fit">
+ <div class="charthead"><h2>The fit: slowdown per revolution against speed²</h2></div>
+ <div class="caption">One dot per pair of neighbouring speed points. The model says these lie on a straight line:
+ the intercept is 2a (friction) and the slope is 2b (drag).</div>
+ <svg id="fit" role="img" aria-label="Slowdown per revolution against speed squared, with fitted lines"></svg>
+</section>
+
+<section>
+<h2 style="margin-top:28px">The model</h2>
+<div class="eq">df/dt = −a − b·f²</div>
+<p><b>f</b> is the rotor speed in revolutions per second.</p>
+<ul>
+<li><b>a</b> (rev/s²) is a slowdown that is the same at every speed: dry friction, mainly from the bearing (shield or seal rub, rolling resistance of the balls).</li>
+<li><b>b·f²</b> grows with the square of speed, as air drag on the cups does, so <b>b</b> (1/rev) mainly describes the cups and arms.</li>
+<li>The two balance at f = √(a/b), about 0.3 rev/s for the 608ZZ. Above that, drag dominates and removes a fixed fraction of the speed every revolution (about 9%), which gives the long tail; below it, bearing friction takes over and stops the rotor.</li>
+</ul>
+<h3>How it is fitted</h3>
+<p>Revolutions are counted exactly, so the fit uses revolution count n instead of time. Since df/dt = f·df/dn, the model becomes</p>
+<div class="eq">d(f²)/dn = −2a − 2b·f²</div>
+<p>which is a straight line in f². Each pair of consecutive speed points gives one value of Δ(f²)/Δn at the
+average f², and a weighted least-squares line through them gives a and b. No time derivatives are needed.
+Left out of the fit: revolutions while the hand is still on the rotor (everything up to one revolution after
+the last speed-up), the lopsided revolution that spans a stop, and speeds below 0.2 rev/s, where the
+magnet's pull on the reed switch and slowing within a single revolution distort things.</p>
+<h3>Solutions</h3>
+<p>Over time: f(t) = √(a/b) · tan( atan(f₀·√(b/a)) − √(ab)·t ). Over revolutions: f² = (f₀² + a/b)·e^(−2bn) − a/b,
+so a spin from f₀ stops after ln(1 + b·f₀²/a) / 2b revolutions.</p>
+<h3>Limits</h3>
+<ul>
+<li>a and b are rates of slowing down, not torques: converting needs the rotor's moment of inertia. The rotor is the same for every bearing, so comparing a compares friction directly.</li>
+<li>A third term proportional to speed (grease drag) made the 608ZZ fit unstable and no better, so it is left out. A heavily greased bearing that the two-term model cannot fit would show as curvature on the fit chart.</li>
+<li>b is for still air indoors; it is not a wind calibration.</li>
+</ul>
+<h3>Running a test</h3>
+<ol>
+<li>Start a maintenance window on the dashboard, then bring the sensor indoors.</li>
+<li>Give 5 or more single pushes, each to at least 2 rev/s, letting it stop completely in between.</li>
+<li>Add the time range to <code>spindown_sets.json</code> (label, start, end, note); this page and <code>spindown.py</code> pick it up on reload.</li>
+</ol>
+</section>
+
+<details><summary>Table: every spin</summary><div class="table-wrap"><table id="table"></table></div></details>
+<p class="caption" id="foot"></p>
+<div class="tip" id="tip" hidden></div>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), NS='http://www.w3.org/2000/svg';
+const COLORS=['--s1','--s2','--s3','--s4','--s5','--s6'].map(v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+let data=null, shown=new Set(), logY=false;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>`&#${c.charCodeAt(0)};`);
+const fmt=(v,d)=>v==null||!isFinite(v)?'—':v.toFixed(d);
+const pm=(s,d)=>s&&s.mean!=null?`${fmt(s.mean,d)}${s.sd!=null?` ± ${fmt(s.sd,d)}`:''}`:'—';
+const color=i=>COLORS[i%COLORS.length];
+
+// ---- model ----
+function tBetween(a,b,f1,f2){ // seconds from f1 down to f2 (f1>=f2)
+ if(a<=1e-9) return (1/f2-1/f1)/b;
+ const k=Math.sqrt(b/a); return (Math.atan(f1*k)-Math.atan(f2*k))/Math.sqrt(a*b);
+}
+function fAt(a,b,f1,t){ // speed t seconds after f1
+ if(a<=1e-9) return f1/(1+b*f1*t);
+ const k=Math.sqrt(b/a), v=Math.atan(f1*k)-Math.sqrt(a*b)*t; return v<=0?0:Math.tan(v)/k;
+}
+const REF=2; // rev/s: time origin of the speed chart
+function shift(set,spin){ // seconds to add so the spin's first point sits on its set's curve
+ const a=set.summary.a.mean,b=set.summary.b.mean,f0=spin.points[0][2];
+ return f0<=REF?tBetween(a,b,REF,f0):-tBetween(a,b,f0,REF);
+}
+
+// ---- svg helpers ----
+function el(tag,attrs,parent){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e;}
+function niceTicks(lo,hi,n=5){const span=hi-lo||1, step0=span/n, mag=10**Math.floor(Math.log10(step0)), err=step0/mag;
+ const step=mag*(err>=7.5?10:err>=3.5?5:err>=1.5?2:1); const out=[];for(let v=Math.ceil(lo/step)*step;v<=hi+step*1e-9;v+=step)out.push(+v.toFixed(10));return out;}
+const tickDec=ticks=>ticks.length<2?2:Math.max(0,-Math.floor(Math.log10(ticks[1]-ticks[0])+1e-9));
+function frame(svg,height){svg.innerHTML='';const w=svg.clientWidth||svg.parentNode.clientWidth;svg.setAttribute('viewBox',`0 0 ${w} ${height}`);svg.setAttribute('height',height);return w;}
+const tip=$('tip');
+function showTip(evt,html){const box=tip.parentNode.getBoundingClientRect();tip.innerHTML=html;tip.hidden=false;
+ const r=tip.getBoundingClientRect();let x=evt.clientX-box.left+14, y=evt.clientY-box.top+14;
+ if(evt.clientX+14+r.width>window.innerWidth-8)x=evt.clientX-box.left-r.width-14;tip.style.left=x+'px';tip.style.top=y+'px';}
+const hideTip=()=>{tip.hidden=true;};
+
+// ---- strip (dot) charts: one row per set ----
+function strip(svg,key,digits,unit){
+ const sets=data.sets.map((s,i)=>({s,i})).filter(x=>shown.has(x.i));
+ const rowH=34, top=8, bottom=26, left=10, right=12, h=top+bottom+rowH*Math.max(1,sets.length);
+ const w=frame(svg,h);
+ const vals=sets.flatMap(({s})=>s.spins.map(p=>p[key]).filter(v=>v!=null));
+ if(!vals.length){el('text',{x:w/2,y:h/2,'text-anchor':'middle'},svg).textContent='No spins';return;}
+ let lo=Math.min(...vals),hi=Math.max(...vals);const pad=(hi-lo)*0.12||Math.abs(hi)*0.1||1;lo-=pad;hi+=pad;
+ const ticks=niceTicks(lo,hi,4);lo=Math.min(lo,ticks[0]);hi=Math.max(hi,ticks.at(-1));
+ const X=v=>left+(v-lo)/(hi-lo)*(w-left-right);
+ for(const t of ticks){el('line',{x1:X(t),x2:X(t),y1:top,y2:h-bottom,stroke:'var(--grid)'},svg);
+  el('text',{x:X(t),y:h-bottom+16,'text-anchor':'middle'},svg).textContent=t.toFixed(tickDec(ticks));}
+ sets.forEach(({s,i},row)=>{
+  const y=top+rowH*row+rowH/2, st=s.summary[key], c=color(i);
+  if(st.mean!=null&&st.sd!=null)el('line',{x1:X(st.mean-st.sd),x2:X(st.mean+st.sd),y1:y,y2:y,stroke:c,'stroke-width':2,'stroke-opacity':.55},svg);
+  if(st.mean!=null)el('line',{x1:X(st.mean),x2:X(st.mean),y1:y-10,y2:y+10,stroke:c,'stroke-width':2},svg);
+  s.spins.forEach((p,k)=>{if(p[key]==null)return;
+   const dot=el('circle',{cx:X(p[key]),cy:y+((k%3)-1)*5,r:4.5,fill:c,stroke:'var(--surface)','stroke-width':2},svg);
+   const hit=el('circle',{cx:X(p[key]),cy:y+((k%3)-1)*5,r:10,fill:'transparent'},svg);
+   hit.addEventListener('pointermove',e=>showTip(e,`<b>${esc(s.label)}</b><br>spin ${k+1} · ${fmt(p[key],digits)} ${unit}<br>set mean ${pm(st,digits)}`));
+   hit.addEventListener('pointerleave',hideTip);});
+ });
+}
+
+// ---- speed vs time ----
+function speedChart(){
+ const svg=$('speed'), h=360, left=46, right=14, top=12, bottom=34, w=frame(svg,h);
+ const lines=[];let tmin=0,tmax=10,fmax=REF;
+ data.sets.forEach((s,i)=>{if(!shown.has(i)||s.summary.a.mean==null)return;
+  s.spins.forEach((p,k)=>{const sh=shift(s,p);const pts=p.points.map(([t,n,f])=>[t+sh,f,n]);
+   lines.push({s,i,k,pts});for(const [t,f] of pts){tmin=Math.min(tmin,t);tmax=Math.max(tmax,t);fmax=Math.max(fmax,f);}});});
+ const fmin=0.15;
+ const X=t=>left+(t-tmin)/(tmax-tmin)*(w-left-right);
+ const Y=logY?f=>top+(Math.log(fmax*1.08)-Math.log(Math.max(f,fmin)))/(Math.log(fmax*1.08)-Math.log(fmin))*(h-top-bottom)
+            :f=>top+(fmax*1.08-f)/(fmax*1.08)*(h-top-bottom);
+ const yt=logY?[0.2,0.3,0.5,1,2,3,4].filter(v=>v<=fmax*1.08):niceTicks(0,fmax*1.08,5);
+ for(const v of yt){el('line',{x1:left,x2:w-right,y1:Y(v),y2:Y(v),stroke:'var(--grid)'},svg);el('text',{x:left-6,y:Y(v)+4,'text-anchor':'end'},svg).textContent=v;}
+ for(const t of niceTicks(tmin,tmax,8)){el('line',{x1:X(t),x2:X(t),y1:top,y2:h-bottom,stroke:'var(--grid)'},svg);el('text',{x:X(t),y:h-bottom+16,'text-anchor':'middle'},svg).textContent=t;}
+ el('text',{x:w-right,y:h-4,'text-anchor':'end'},svg).textContent='seconds from 2 rev/s';
+ el('text',{x:left,y:top-2},svg).textContent='rev/s';
+ // model curves first, under the data
+ data.sets.forEach((s,i)=>{if(!shown.has(i)||s.summary.a.mean==null)return;const a=s.summary.a.mean,b=s.summary.b.mean;
+  const fs=Math.max(...s.spins.map(p=>p.points[0][2])),t0=fs>REF?-tBetween(a,b,fs,REF):0;let d='';
+  for(let t=t0;t<=tmax;t+=(tmax-tmin)/300){const f=fAt(a,b,REF,t);if(f<fmin)break;d+=`${d?'L':'M'}${X(t).toFixed(1)},${Y(f).toFixed(1)}`;}
+  el('path',{d,fill:'none',stroke:color(i),'stroke-width':2,'stroke-dasharray':'6 4','stroke-opacity':.9},svg);});
+ const all=[];
+ for(const L of lines){// Break the line where reports are missing (old firmware lost some): more than 3 revolutions apart.
+  const d=L.pts.filter(p=>p[1]>=fmin).map((p,j,a)=>`${j&&p[2]-a[j-1][2]<=3?'L':'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join('');
+  el('path',{d,fill:'none',stroke:color(L.i),'stroke-width':1.5,'stroke-opacity':.7},svg);
+  for(const p of L.pts){if(p[1]<fmin)continue;el('circle',{cx:X(p[0]),cy:Y(p[1]),r:2.5,fill:color(L.i)},svg);all.push({x:X(p[0]),y:Y(p[1]),L,p});}}
+ hover(svg,all,o=>`<b>${esc(o.L.s.label)}</b><br>spin ${o.L.k+1}<br>${fmt(o.p[1],3)} rev/s at ${fmt(o.p[0],1)} s`);
+}
+
+// ---- linearised fit ----
+function fitChart(){
+ const svg=$('fit'), h=340, left=52, right=14, top=12, bottom=34, w=frame(svg,h);
+ const dots=[];let xmax=1,ymax=0.1;
+ data.sets.forEach((s,i)=>{if(!shown.has(i))return;s.spins.forEach((p,k)=>p.pairs.forEach(([x,y,wt])=>{dots.push({s,i,k,x,y:-y,wt});xmax=Math.max(xmax,x);ymax=Math.max(ymax,-y);}));});
+ xmax*=1.05;ymax*=1.08;
+ const X=v=>left+v/xmax*(w-left-right), Y=v=>top+(ymax-v)/ymax*(h-top-bottom);
+ for(const v of niceTicks(0,ymax,5)){el('line',{x1:left,x2:w-right,y1:Y(v),y2:Y(v),stroke:'var(--grid)'},svg);el('text',{x:left-6,y:Y(v)+4,'text-anchor':'end'},svg).textContent=v;}
+ for(const v of niceTicks(0,xmax,8)){el('line',{x1:X(v),x2:X(v),y1:top,y2:h-bottom,stroke:'var(--grid)'},svg);el('text',{x:X(v),y:h-bottom+16,'text-anchor':'middle'},svg).textContent=v;}
+ el('text',{x:w-right,y:h-4,'text-anchor':'end'},svg).textContent='f² (rev²/s²), mean of the pair';
+ el('text',{x:left,y:top-2},svg).textContent='−Δ(f²)/Δn (rev/s²)';
+ data.sets.forEach((s,i)=>{if(!shown.has(i)||s.summary.a.mean==null)return;const a=s.summary.a.mean,b=s.summary.b.mean;
+  el('line',{x1:X(0),y1:Y(2*a),x2:X(xmax),y2:Y(2*a+2*b*xmax),stroke:color(i),'stroke-width':2,'stroke-dasharray':'6 4'},svg);});
+ const pts=dots.map(d=>{el('circle',{cx:X(d.x),cy:Y(d.y),r:3,fill:color(d.i),'fill-opacity':.8},svg);return {x:X(d.x),y:Y(d.y),d};});
+ hover(svg,pts,o=>`<b>${esc(o.d.s.label)}</b><br>spin ${o.d.k+1} · f² ${fmt(o.d.x,3)}<br>−Δ(f²)/Δn ${fmt(o.d.y,4)} over ${o.d.wt} rev`);
+}
+function hover(svg,pts,html){
+ svg.onpointermove=e=>{const r=svg.getBoundingClientRect(),vb=svg.viewBox.baseVal,sx=vb.width/r.width;
+  const x=(e.clientX-r.left)*sx,y=(e.clientY-r.top)*sx;let best=null,bd=14*sx;
+  for(const p of pts){const d=Math.hypot(p.x-x,p.y-y);if(d<bd){bd=d;best=p;}}
+  if(best)showTip(e,html(best));else hideTip();};
+ svg.onpointerleave=hideTip;
+}
+
+// ---- summary, filters, table ----
+function render(){
+ const ref=data.sets.find(s=>s.reference);
+ $('summary').innerHTML=data.sets.map((s,i)=>{if(!shown.has(i))return'';const S=s.summary;
+  const rel=ref&&ref!==s&&S.a.mean!=null&&ref.summary.a.mean?` (${((S.a.mean/ref.summary.a.mean-1)*100).toFixed(0)}% vs reference)`:'';
+  return `<div class="card"><div class="label"><span class="swatch" style="background:${color(i)}"></span>${esc(s.label)}${s.reference?' <span class="badge">reference</span>':''}</div>
+  <dl class="kv"><dt>Friction a</dt><dd>${pm(S.a,4)} rev/s²${rel}</dd><dt>Drag b</dt><dd>${pm(S.b,4)} /rev</dd>
+  <dt>Coast 2→0.5</dt><dd>${pm(S.coast,1)} s</dd><dt>Revs 2→stop</dt><dd>${pm(S.revs_hi,1)}</dd><dt>Spins</dt><dd>${s.spins.length}</dd></dl>
+  ${s.note?`<div class="caption" style="margin-top:8px">${esc(s.note)}</div>`:''}</div>`;}).join('');
+ strip($('stripA'),'a',4,'rev/s²');strip($('stripB'),'b',4,'/rev');strip($('stripC'),'coast',1,'s');
+ speedChart();fitChart();
+ const rows=data.sets.flatMap((s,i)=>s.spins.map((p,k)=>`<tr><td><span class="swatch" style="display:inline-block;background:${color(i)};margin-right:6px"></span>${esc(s.label)} #${k+1}</td><td>${new Date(p.start*1000).toLocaleTimeString()}</td><td>${fmt(p.f0,2)}</td><td>${p.revs}${p.extra_half?'+½':''}</td><td>${fmt(p.duration,1)}</td><td>${fmt(p.a,4)}</td><td>${fmt(p.b,4)}</td><td>${fmt(p.r2,3)}</td><td>${fmt(p.coast,1)}</td><td>${fmt(p.revs_hi,1)}</td></tr>`));
+ $('table').innerHTML=`<tr><th>Spin</th><th>Start</th><th>f₀ rev/s</th><th>Revs</th><th>Duration s</th><th>a rev/s²</th><th>b /rev</th><th>R²</th><th>Coast 2→0.5 s</th><th>Revs 2→stop</th></tr>${rows.join('')}`;
+}
+function filters(){
+ $('setFilters').innerHTML=data.sets.map((s,i)=>`<label><input type="checkbox" data-i="${i}" ${shown.has(i)?'checked':''}><span class="swatch" style="background:${color(i)}"></span>${esc(s.label)}</label>`).join('');
+ $('setFilters').onchange=e=>{const i=+e.target.dataset.i;e.target.checked?shown.add(i):shown.delete(i);render();};
+}
+$('linBtn').onclick=()=>{logY=false;$('linBtn').setAttribute('aria-pressed','true');$('logBtn').setAttribute('aria-pressed','false');speedChart();};
+$('logBtn').onclick=()=>{logY=true;$('logBtn').setAttribute('aria-pressed','true');$('linBtn').setAttribute('aria-pressed','false');speedChart();};
+let resizeTimer;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>data&&render(),150);});
+fetch('/api/spindown').then(r=>{if(!r.ok)throw new Error(r.status);return r.json();}).then(d=>{
+ data=d;data.sets.forEach((s,i)=>shown.add(i));
+ if(!data.sets.length){$('summary').innerHTML='<p>No test sets yet: add one to spindown_sets.json.</p>';return;}
+ filters();render();
+ $('foot').textContent=`Fit uses speeds ≥ ${d.settings.fit_min} rev/s; spins starting below ${d.settings.min_start} rev/s are ignored.`;
+}).catch(e=>{$('summary').innerHTML=`<p class="error">Could not load /api/spindown: ${esc(e.message)}</p>`;});
+</script>
+</body>
+</html>
