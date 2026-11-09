@@ -101,6 +101,19 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(len(worst), 221)
         self.assertLessEqual(len(f'+RCV=1,{len(worst)},{worst},-120,-20'), 255)
 
+    def test_w8_sleep(self):
+        base = 'W8,abcd1234,2,3,2000,6000,148,148,186a0,1,ffffffffffffffff,3,0,0,0,ffffffffffffffff,1,0,1036,18bcd,b7b'
+        deep, light = decode(frame(base + ',1')), decode(frame(base + ',0'))
+        self.assertEqual((deep['sleep'], light['sleep'], deep['pressure_pa'], deep['vbat_mv']), (1, 0, 101325, 0x1036))
+        self.assertIn('SLEEP=deep', format_measurement(deep))
+        for bad in (base, base + ',2', base + ',1,0'):
+            with self.assertRaises(ValueError, msg=bad):
+                decode(frame(bad))
+        f, c = 'f' * 16, 'f' * 8
+        worst = f'W8,ffffffff,ffffffff,{f},{c},{c},{f},{f},{f},1,{f},{f},1,{f},{c},{f},1,{f},19c8,1adb0,dfe,1'
+        self.assertEqual(len(worst), 223)
+        self.assertLessEqual(len(f'+RCV=1,{len(worst)},{worst},-120,-20'), 255)
+
     def test_max_length(self):
         # All eight uint64 fields at full width still fit the module and receiver.
         payload = 'W2,ffffffff,4294967295,' + ','.join([str(UNKNOWN)]*8)

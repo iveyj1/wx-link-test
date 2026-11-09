@@ -217,8 +217,10 @@ function paintDiag(p,radioAge){
   add('Last packet',`${radioAge.toFixed(1)} s ago · seq ${p.seq}`,radioAge>75);
   add('Missed, 1 h',loss(h1),h1&&h1.missing>0.05*(h1.received+h1.missing));
   add('Missed, 24 h',loss(h24));
-  add('Barometer',p.version!=='W7'?'— (needs W7)':p.pressure_pa==null?'⚠ BMP180 not answering':`BMP180 · raw ${(p.pressure_pa/100).toFixed(2)} hPa · ${p.temp_c.toFixed(1)} °C`,p.version==='W7'&&p.pressure_pa==null);
+  const w7=p.version>='W7';
+  add('Barometer',!w7?'— (needs W7)':p.pressure_pa==null?'⚠ BMP180 not answering':`BMP180 · raw ${(p.pressure_pa/100).toFixed(2)} hPa · ${p.temp_c.toFixed(1)} °C`,w7&&p.pressure_pa==null);
   add('Battery',p.vbat_v==null?'— (needs W6)':`${p.vbat_v.toFixed(2)} V`,p.vbat_v!=null&&p.vbat_v<3.5);
+  add('Sleep',p.sleep==null?'— (needs W8)':p.sleep?'deep standby':'light (USB host seen; reset on battery for deep standby)',p.sleep===0);
   add('32 kHz clock',p.clock==null?'—':p.clock?'⚠ internal fallback (crystal stopped)':'crystal',!!p.clock);
   if(p.pin!=null)add('Wind reed D5',`${p.pin?'open':'closed'}${p.pin_age_s==null?'':` · unchanged ${longDur(p.pin_age_s)}`}`);
   if(p.rain_pin!=null)add('Rain reed D10',`${p.rain_pin?'open':'closed'} · ${p.rain_tips} tips since start`);
@@ -544,7 +546,7 @@ function paintWx(){
  $('tUnit').textContent=tUnits==='F'?'°F':'°C';
  $('pNow').textContent=have?pad(hPa(p.pressure_pa),1,4):'—';
  $('tNow').textContent=have?pad(tVal(p.temp_c),1,3):'—';
- $('pNote').textContent=have?`at last packet, ${durText(Math.max(0,now-p.received))} ago${altitude?` · station ${stationHpa(p.pressure_pa).toFixed(1)} hPa`:''} · = ${(hPa(p.pressure_pa)/33.8639).toFixed(2)} inHg${pOffset?` · correction ${pOffset>0?'+':''}${pOffset} hPa`:''}`:p&&p.version==='W7'?'No reading: BMP180 not answering':'Needs sensor firmware W7 and a BMP180';
+ $('pNote').textContent=have?`at last packet, ${durText(Math.max(0,now-p.received))} ago${altitude?` · station ${stationHpa(p.pressure_pa).toFixed(1)} hPa`:''} · = ${(hPa(p.pressure_pa)/33.8639).toFixed(2)} inHg${pOffset?` · correction ${pOffset>0?'+':''}${pOffset} hPa`:''}`:p&&p.version>='W7'?'No reading: BMP180 not answering':'Needs sensor firmware W7 and a BMP180';
  const ago=pressureAgo(now,10800);
  if(have&&ago!=null){const d=hPa(p.pressure_pa)-hPa(ago);
   $('pTrend').textContent=(d>=0?'+':'−')+pad(Math.abs(d),1,2).trimStart();

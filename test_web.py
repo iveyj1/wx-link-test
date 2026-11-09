@@ -164,6 +164,13 @@ class WebTests(unittest.TestCase):
         self.store.maintenance('start', now=now + 60); self.store.maintenance('stop', now=now + 100)
         self.assertEqual(self.store.weather(now, now + 600, 600)['points'][0]['n'], 1)
 
+    def test_w8_sleep_logged(self):
+        p = ('W8,abcd1234,1,3,2000,6000,148,148,186a0,1,ffffffffffffffff,3,0,'
+             '0,0,ffffffffffffffff,1,0,1000,18bcd,b7b,1')
+        self.store.accept(decode(f'+RCV=1,{len(p)},{p},-80,9'), 1_800_000_000.0)
+        self.assertEqual(tuple(self.store.db.execute('SELECT version, sleep FROM packets').fetchone()), ('W8', 1))
+        self.assertEqual(self.store.latest['sleep'], 1)
+
     def test_condensed_history(self):
         now = 1_800_000_000.0
         # 30 one-second revolutions in one 60 s bucket, then a 300 s calm revolution.

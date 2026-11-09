@@ -18,7 +18,7 @@ RETENTION = 7 * 86400
 RAIN_RETENTION = 400 * 86400  # rain rows are tiny; keep over a year of daily totals
 GAP = 3600  # no packet for this long is recorded as a data gap
 WEATHER_STEP = 60  # seconds between stored barometer rows (the sensor reads every 30 s)
-VERSIONS = ('W2', 'W3', 'W4', 'W5', 'W6', 'W7')
+VERSIONS = ('W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8')
 # Maintenance windows (takedown, bench tests): data is still recorded, but graphs and rain
 # totals leave out samples whose revolution overlaps a window and tips inside one.
 # end NULL = in progress.
@@ -83,6 +83,9 @@ class Store:
             # W7: BMP180 station pressure (Pa) and enclosure temperature (deg C). NULL = none.
             self.db.execute('ALTER TABLE packets ADD COLUMN pressure_pa INTEGER')
             self.db.execute('ALTER TABLE packets ADD COLUMN temp_c REAL')
+        if 'sleep' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
+            # W8: MCU sleep mode, 0 = light sleep (USB host seen), 1 = deep standby. NULL before W8.
+            self.db.execute('ALTER TABLE packets ADD COLUMN sleep INTEGER')
         last = self.db.execute('SELECT MAX(t) FROM weather').fetchone()[0]
         self.last_weather = last or 0
         row = self.db.execute("SELECT value FROM state WHERE key='latest'").fetchone()
@@ -160,13 +163,13 @@ class Store:
                 latest['raw_edges'] = str(packet['raw_edges'])
                 latest['pin_age_s'] = None if packet['pin_age'] == UNKNOWN else packet['pin_age'] / HZ
             self.db.execute('INSERT INTO packets(t,version,session,seq,pulses,revs,uptime,pin,pin_age,raw_edges,rssi,snr,clock,vbat_mv,'
-                            'pressure_pa,temp_c) '
-                            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                            'pressure_pa,temp_c,sleep) '
+                            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                             (received, packet['version'], packet['session'], packet['seq'], latest['count'],
                              latest['revolutions'], str(packet['uptime']), packet['pin'] if w3 else None,
                              str(packet['pin_age']) if w3 else None, latest['raw_edges'] if w3 else None,
                              packet['rssi'], packet['snr'], packet.get('clock'), packet.get('vbat_mv'),
-                             packet.get('pressure_pa'), packet.get('temp_c')))
+                             packet.get('pressure_pa'), packet.get('temp_c'), packet.get('sleep')))
             new_measurement = period > 0 and (restart or latest['revolutions'] != old['revolutions'])
             if new_measurement:
                 self.db.execute('INSERT INTO samples(t,stream,hz,period,a,b,imbalance,revs,pulses) VALUES(?,?,?,?,?,?,?,?,?)',

@@ -10,7 +10,7 @@
 #define SENSOR 1
 #endif
 
-#define FIRMWARE "W7-baro1"
+#define FIRMWARE "W8-standby1"
 constexpr uint32_t HZ = 32768;
 constexpr uint8_t REED = 5;
 constexpr uint8_t VBAT = A7; // = D9: battery through the Feather's 1:2 divider (do not use D9 otherwise)
@@ -50,7 +50,16 @@ volatile bool rtcStuck = false;
 uint64_t lastTicks = 0;
 bool onInternalClock = false;
 uint32_t clockFailovers = 0, clockRestores = 0, rtcStallRearms = 0, clockLostMs = 0;
-uint32_t lastCrystalTryMs = 0, xoscTestUntil = 0;
+uint32_t lastCrystalTryMs = 0, xoscTestUntil = 0; // RTC wall milliseconds (see wallMs())
+// Deep standby (W8): on unless a USB host has been seen this session. In standby the CPU,
+// 48 MHz DFLL and SysTick stop, so millis() stands still; the RTC, the reed EIC and the WDT
+// keep running and wake the CPU. A stopped crystal also stops the RTC and EIC, so the WDT
+// early-warning interrupt (8 s after the last kick, on OSCULP32K) wakes the clock monitor.
+constexpr uint32_t WDT_EARLY_MS = 8000;
+bool deepSleep = false, usbSeen = false;
+volatile bool wdtEarly = false;
+volatile uint32_t wdtEarlyMs = 0;
+uint32_t wdtEarlyWakes = 0;
 
 void rtcSync() {
   StageScope stage(ST_CLOCK_SYNC);
@@ -79,6 +88,14 @@ uint64_t ticks() {
   uint32_t mask = __get_PRIMASK(); __disable_irq();
   uint64_t t = ticksLocked();
   __set_PRIMASK(mask); return t;
+}
+// Milliseconds from the RTC: unlike millis(), these keep counting through deep standby.
+// Only call while the RTC has a running clock (or rtcStuck, which returns the last value).
+uint32_t wallMsLocked() { return uint32_t(ticksLocked() * 1000 / HZ); }
+uint32_t wallMs() {
+  uint32_t mask = __get_PRIMASK(); __disable_irq();
+  uint32_t ms = wallMsLocked();
+  __set_PRIMASK(mask); return ms;
 }
 // Reports are due when a revolution completes or the bucket tips; both counts only grow.
 uint64_t reportKey() { return pulses.revolutions + rain.tips; }
@@ -224,15 +241,23 @@ void restoreTimeLocked(uint32_t frozenMs) {
 }
 void clockMonitor() {
   uint32_t nowMs = millis();
-  if (xoscTestUntil && int32_t(nowMs - xoscTestUntil) >= 0) {
+  if (xoscTestUntil && !rtcStuck && int32_t(wallMs() - xoscTestUntil) >= 0) {
     xoscTestUntil = 0;
     SYSCTRL->XOSC32K.bit.ENABLE = 1;
     logLine("# xosc-test: crystal oscillator re-enabled");
   }
   noInterrupts();
+  // millis() only advances while awake, so in deep standby a dead RTC shows up as the WDT
+  // early warning instead: nothing kicked the WDT for 8 s, i.e. no RTC or reed wake-up.
   uint32_t quiet = nowMs - lastRtcIrqMs;
+  if (wdtEarly) {
+    wdtEarly = false;
+    uint32_t q = WDT_EARLY_MS + (nowMs - wdtEarlyMs);
+    if (q > quiet) quiet = q;
+  }
   bool failed = rtcStuck || quiet >= RTC_QUIET_MS;
-  bool retry = !failed && onInternalClock && nowMs - lastCrystalTryMs >= CRYSTAL_RETRY_MS;
+  // On the internal clock the RTC runs, so its wall time paces the retries (also in standby).
+  bool retry = !failed && onInternalClock && wallMsLocked() - lastCrystalTryMs >= CRYSTAL_RETRY_MS;
   if (failed && !rtcStuck && rtcClockRunning()) {
     // Clock is fine; a compare match was missed. Re-arm without changing source.
     ++rtcStallRearms; lastRtcIrqMs = nowMs; debounceArm();
@@ -247,8 +272,8 @@ void clockMonitor() {
       onInternalClock = toInternal;
       if (toInternal) ++clockFailovers;
       clockLostMs += quiet;
-      lastCrystalTryMs = nowMs;
       restoreTimeLocked(quiet);
+      lastCrystalTryMs = wallMsLocked();
     }
     interrupts();
     logLine(rtcStuck ? "# RTC clock failed; no working 32 kHz source yet"
@@ -257,7 +282,7 @@ void clockMonitor() {
     return;
   }
   if (retry) {
-    lastCrystalTryMs = nowMs;
+    lastCrystalTryMs = wallMsLocked();
     uint64_t before = ticksLocked();
     uint32_t beforeMs = millis();
     routeSlowClock(GCLK_CRYSTAL);
@@ -290,7 +315,17 @@ void wdtBegin() {
   while (GCLK->STATUS.bit.SYNCBUSY) {}
   WDT->CTRL.reg = 0; while (WDT->STATUS.bit.SYNCBUSY) {}
   WDT->CONFIG.reg = WDT_CONFIG_PER_16K;
+  WDT->EWCTRL.reg = WDT_EWCTRL_EWOFFSET_8K; // early warning 8 s after a kick (see WDT_EARLY_MS)
+  WDT->INTFLAG.reg = WDT_INTFLAG_EW;
+  WDT->INTENSET.reg = WDT_INTENSET_EW;
+  NVIC_SetPriority(WDT_IRQn, 1);
+  NVIC_EnableIRQ(WDT_IRQn);
   WDT->CTRL.reg = WDT_CTRL_ENABLE; while (WDT->STATUS.bit.SYNCBUSY) {}
+}
+void WDT_Handler() {
+  // Healthy loops kick every few seconds at most; this fires only if nothing woke the CPU.
+  WDT->INTFLAG.reg = WDT_INTFLAG_EW;
+  wdtEarly = true; wdtEarlyMs = millis(); ++wdtEarlyWakes;
 }
 void wdtKick() {
   // Writing CLEAR during synchronization stalls the bus; skip, the next kick will land.
@@ -427,7 +462,7 @@ bool i2cWrite(uint8_t reg, uint8_t v) {
 }
 bool baroBegin() {
   StageScope stage(ST_BARO);
-  baroProbeMs = millis();
+  baroProbeMs = wallMs();
   uint8_t id = 0, e[22];
   if (!i2cRead(0xD0, &id, 1) || id != 0x55 || !i2cRead(0xAA, e, 22)) return false;
   auto w = [&](int i) { return uint16_t(e[2*i] << 8 | e[2*i+1]); };
@@ -454,7 +489,7 @@ bool baroRead() {
 }
 void baroService() {
   if (baroDisabled) return;
-  const uint32_t ms = millis();
+  const uint32_t ms = wallMs(); // RTC time: millis() stands still in deep standby
   if (!baroOK) {
     if (baroProbeMs && ms - baroProbeMs < BARO_RETRY_MS) return;
     if (!(baroOK = baroBegin())) return;
@@ -504,9 +539,10 @@ void report() {
   if (!due) return;
   const uint32_t vbatMv = readVbatMv();
   baroService();
-  const bool baroFresh = baroHave && millis() - baroGoodMs < BARO_STALE_MS;
+  const bool baroFresh = baroHave && wallMs() - baroGoodMs < BARO_STALE_MS;
   const uint64_t pressurePa = baroFresh ? baroPa : 0, tempDeciK = baroFresh ? baroDeciC + 2732 : 0; // 0 = none
   char payload[256], cmd[288];
+  // W8 = W7 + sleep mode digit (0 = light sleep, 1 = deep standby).
   // W7: every number is lowercase hex. uint64 fields take <= 16 digits; A, B and rain_interval
   // are capped at ffffffff (36 h), pressure (<= 110000 Pa) at 5 and temperature at 3, so the worst
   // case is provably 221 bytes, under the radio's 240-byte limit (and the receiver's
@@ -518,7 +554,7 @@ void report() {
   // Pins: 1 = open/high. rain_interval 0 = fewer than two tips; ages all-f = never.
   auto cap32 = [](uint64_t v) { return v > 0xffffffffULL ? uint64_t(0xffffffffULL) : v; };
   const uint64_t fields[] = {count,cap32(intervalA),cap32(intervalB),age,revAge,now};
-  char *out = payload + snprintf(payload,sizeof(payload),"W7,%08lx,%lx",
+  char *out = payload + snprintf(payload,sizeof(payload),"W8,%08lx,%lx",
                                  (unsigned long)session,(unsigned long)++sequence);
   for (uint64_t v : fields) out = hex64(v,out);
   *out++ = ','; *out++ = '0' + pin;
@@ -529,6 +565,7 @@ void report() {
   out = hex64(tipEdges,out);
   out = hex64(vbatMv,out);
   out = hex64(pressurePa,out); out = hex64(tempDeciK,out);
+  *out++ = ','; *out++ = '0' + deepSleep;
   *out = 0;
   logLine(payload);
   if (SENSOR && consecutiveFails >= RADIO_RESET_AFTER_FAILS &&
@@ -556,10 +593,36 @@ void report() {
 }
 void sleepSensor() {
   StageScope stage(ST_IDLE);
-  // Controlled diagnostic: NO MCU deep standby, even on battery.
-  // Keep the same radio MODE=1 policy, clocks, debounce and report scheduling.
-  SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
+  if (!deepSleep) {
+    // Light sleep: SysTick wakes every 1 ms, USB keeps working.
+    SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk;
+    __DSB(); __WFI();
+    return;
+  }
+  // Deep standby. Interrupts are masked so a report flagged just before WFI is not slept
+  // through (WFI still wakes on a pending interrupt; the handler runs after unmasking).
+  __disable_irq();
+  if (reportDue || forceReport) { __enable_irq(); return; }
+  ++standbyEntries;
+  SysTick->CTRL &= ~SysTick_CTRL_TICKINT_Msk; // as ArduinoLowPower: a pending SysTick must not wake/hang
+  SCB->SCR |= SCB_SCR_SLEEPDEEP_Msk;
   __DSB(); __WFI();
+  SCB->SCR &= ~SCB_SCR_SLEEPDEEP_Msk; // the other __WFI() calls (radio waits) rely on light sleep
+  SysTick->CTRL |= SysTick_CTRL_TICKINT_Msk;
+  ++standbyReturns;
+  __enable_irq();
+}
+bool usbHostActive() {
+  // USB start-of-frame counter advances only while a host is talking to us.
+  uint16_t frame = USB->DEVICE.FNUM.bit.FNUM;
+  delay(3);
+  return frame != USB->DEVICE.FNUM.bit.FNUM;
+}
+// Once a USB host is seen, stay in light sleep for the session (USB and !status keep
+// working). Plugging USB in later: press reset once, or wait for the next report to notice.
+void updateSleepMode() {
+  if (usbLive) usbSeen = true;
+  deepSleep = SENSOR && !usbSeen;
 }
 void setup() {
   resetCause = PM->RCAUSE.reg;
@@ -583,6 +646,8 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(REED), reedEdge, CHANGE);
     rain.begin(digitalRead(RAIN) == HIGH);
     attachInterrupt(digitalPinToInterrupt(RAIN), rainEdge, CHANGE);
+    // Reed edges wake the CPU from standby.
+    EIC->WAKEUP.reg |= (1u << g_APinDescription[REED].ulExtInt) | (1u << g_APinDescription[RAIN].ulExtInt);
     NVIC_SetPriority(EIC_IRQn, 0);
     // CHANGE detection needs a running EIC clock even in standby.
     GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_EIC | GCLK_CLKCTRL_GEN_GCLK2 | GCLK_CLKCTRL_CLKEN;
@@ -599,6 +664,8 @@ void setup() {
   traceRecord.session = session;
   wdtBegin();
   delay(1500);
+  usbLive = usbHostActive();
+  updateSleepMode();
   logLine(SENSOR ? "# SENSOR wind D5, rain D10 (each closure = 1 tip); 32768 ticks/s; debounce=328 ticks" : "# RECEIVER address2; 915MHz SF7 BW500 CR4/5 2dBm");
   radioOK = configureRadio();
   if (SENSOR && radioOK) command("AT+MODE=1");
@@ -620,7 +687,7 @@ void serviceUsb() {
       if (!strcmp(input,"!report") && SENSOR) {
         forceReport = true; reportDue = true;
       } else if (!strcmp(input,"!standby-test") && SENSOR) {
-        logLine("# Standby test DISABLED in " FIRMWARE);
+        logLine(deepSleep ? "# deep standby is active" : "# light sleep: a USB host was seen this session; unplug USB and reset to use deep standby");
       } else if (!strcmp(input,"!uart-test") && SENSOR) {
         // Simulate a missing TX-complete indication on the next wake command.
         radioUart.injectCompletionTimeout = true;
@@ -629,10 +696,10 @@ void serviceUsb() {
       } else if (!strcmp(input,"!xosc-test")) {
         // Simulate a stopped crystal for 90 s (also removes the DFLL reference, as a real stop does).
         SYSCTRL->XOSC32K.bit.ENABLE = 0;
-        xoscTestUntil = millis() + 90000;
+        xoscTestUntil = wallMs() + 90000;
         logLine("# xosc-test: crystal oscillator disabled for 90 s; expect failover within ~8 s");
       } else if (!strcmp(input,"!clock-retry")) {
-        lastCrystalTryMs = millis() - CRYSTAL_RETRY_MS;
+        lastCrystalTryMs = wallMs() - CRYSTAL_RETRY_MS;
         logLine("# crystal retry requested");
       } else if (!strcmp(input,"!diag-reset")) {
         // Explicit diagnostic retention test only; never invoked automatically.
@@ -645,7 +712,7 @@ void serviceUsb() {
         interrupts();
         char re[21];
         decimal64(n,c); decimal64(rev,r); decimal64(t,p); decimal64(e,re);
-        snprintf(msg,sizeof(msg),"# %s W7 radio=%s pin5=%d pulses=%s revolutions=%s rev_period_ticks=%s raw_edges=%s",
+        snprintf(msg,sizeof(msg),"# %s W8 radio=%s pin5=%d pulses=%s revolutions=%s rev_period_ticks=%s raw_edges=%s",
                  SENSOR ? "sensor" : "receiver",radioOK ? "OK" : "ERROR",digitalRead(REED),c,r,p,re);
         logLine(msg);
         noInterrupts();
@@ -657,7 +724,7 @@ void serviceUsb() {
         logLine(msg);
         snprintf(msg,sizeof(msg),"# baro BMP180 %s pressure=%ld Pa temp=%s%ld.%ld C errors=%lu last_good_ms_ago=%lu",
                  baroDisabled ? "DISABLED(wdt during i2c)" : baroOK ? "OK" : "absent",(long)baroPa,baroDeciC < 0 ? "-" : "",
-                 (long)(abs(baroDeciC)/10),(long)(abs(baroDeciC)%10),(unsigned long)baroErrors,(unsigned long)(baroHave ? millis()-baroGoodMs : 0));
+                 (long)(abs(baroDeciC)/10),(long)(abs(baroDeciC)%10),(unsigned long)baroErrors,(unsigned long)(baroHave ? wallMs()-baroGoodMs : 0));
         logLine(msg);
         snprintf(msg,sizeof(msg),"# fw=" FIRMWARE " session=%08lx reset=0x%02x sleepprm=%u standby=%lu/%lu tx_ok=%lu tx_fail=%lu",
                  (unsigned long)session,resetCause,(unsigned)NVMCTRL->CTRLB.bit.SLEEPPRM,
@@ -667,8 +734,8 @@ void serviceUsb() {
         char diag[256], cmd[72];
         for (unsigned i=0; i<sizeof(cmd); ++i) cmd[i] = traceRecord.command[i];
         cmd[sizeof(cmd)-1] = 0;
-        snprintf(diag,sizeof(diag),"# deep_standby=DISABLED stage=%s parent=%s since_ms=%lu last_command=%s",
-                 stageName(traceRecord.stage),stageName(traceRecord.parent),(unsigned long)traceRecord.sinceMs,cmd);
+        snprintf(diag,sizeof(diag),"# sleep=%s wdt_early=%lu stage=%s parent=%s since_ms=%lu last_command=%s",
+                 deepSleep ? "deep" : "light",(unsigned long)wdtEarlyWakes,stageName(traceRecord.stage),stageName(traceRecord.parent),(unsigned long)traceRecord.sinceMs,cmd);
         logLine(diag);
         snprintf(diag,sizeof(diag),"# uart_ready=%u baud=%lu timeouts=%lu recoveries=%lu last_fault=%s injected=%u flags=0x%02lx status=0x%04lx ctrla=0x%08lx sync=0x%08lx",
                  radioUart.ready,(unsigned long)radioUart.baud,(unsigned long)radioUart.timeouts,
@@ -712,9 +779,8 @@ void loop() {
     if (due) { reporting = true; reportDue = false; }
     interrupts();
     if (due) {
-      uint16_t frame = USB->DEVICE.FNUM.bit.FNUM;
-      delay(3);
-      usbLive = frame != USB->DEVICE.FNUM.bit.FNUM;
+      usbLive = usbHostActive();
+      updateSleepMode();
       report();
       noInterrupts();
       reporting = false;
