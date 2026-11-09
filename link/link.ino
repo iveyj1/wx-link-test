@@ -10,7 +10,7 @@
 #define SENSOR 1
 #endif
 
-#define FIRMWARE "W8-standby3"
+#define FIRMWARE "W8-standby4"
 constexpr uint32_t HZ = 32768;
 constexpr uint8_t REED = 5;
 constexpr uint8_t VBAT = A7; // = D9: battery through the Feather's 1:2 divider (do not use D9 otherwise)
@@ -58,7 +58,7 @@ uint32_t lastCrystalTryMs = 0, xoscTestUntil = 0; // RTC wall milliseconds (see 
 constexpr uint32_t WDT_EARLY_MS = 8000;
 bool deepSleep = false, usbSeen = false;
 // !xosc-test deep detaches USB so the host cannot switch the sensor back to light sleep
-// mid-test; it re-attaches once the crystal is restored.
+// mid-test; it re-attaches (in light sleep) once the crystal is restored.
 bool usbDetachedForTest = false, testForcesDeep = false;
 volatile bool wdtEarly = false;
 volatile uint32_t wdtEarlyMs = 0;
@@ -788,7 +788,9 @@ void loop() {
   clockMonitor();
   if (usbDetachedForTest && !xoscTestUntil && !onInternalClock && !rtcStuck) {
     usbDetachedForTest = false;
-    if (testForcesDeep) usbSeen = false; // stay deep until a report sees the host again
+    // Back to light sleep: a host cannot enumerate a device that is in deep standby
+    // (bench, Nov 8: "device not accepting address", then the host gives up).
+    usbSeen = true; updateSleepMode();
     USBDevice.attach();
   }
   if (SENSOR) {
