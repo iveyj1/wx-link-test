@@ -4,10 +4,24 @@
 
 // Feather M0 D0/D1 = SERCOM0 RX pad 3 / TX pad 2.
 // Keep the Arduino RX ISR/ring, but NEVER use its unbounded TX ring/write/flush.
+//
+// TX goes out by DMA (channel 0, triggered by SERCOM0 DRE), so a command line leaves
+// back-to-back whatever interrupts run meanwhile. The RYLR998 ends a command at an idle
+// gap of about one character: when bytes were written by the CPU, a reed/RTC interrupt
+// (several RTC syncs, a few hundred us) split lines into "+ERR=1" (no CR LF) and "+ERR=2"
+// (no "AT") pairs, ~10% of reports while the rotor turned (bench, Nov 9).
+// The RX interrupt also runs at a higher priority than EIC/RTC (set in begin()), so
+// replies are not overrun ("+O", "+PARAMET,1,12").
+static DmacDescriptor radioDmaDesc __attribute__((aligned(16)));
+static DmacDescriptor radioDmaWriteback __attribute__((aligned(16)));
+constexpr uint8_t RADIO_DMA_CHANNEL = 0;
+
 struct RadioUart {
   uint32_t baud = 115200, timeouts = 0, recoveries = 0, inferredCompletions = 0;
   uint32_t lastFlags = 0, lastStatus = 0, lastCtrlA = 0, lastSync = 0;
-  bool ready = false, injectCompletionTimeout = false, lastInjected = false;
+  bool ready = false, injectCompletionTimeout = false, lastInjected = false, dmaReady = false;
+  uint32_t dmaTimeouts = 0;
+  char txBuffer[300];
   const char *lastFault = "none";
 
   template<class Predicate>
@@ -58,10 +72,36 @@ struct RadioUart {
       fault("enable_sync"); return false;
     }
     NVIC_ClearPendingIRQ(SERCOM0_IRQn);
-    NVIC_SetPriority(SERCOM0_IRQn, SERCOM_NVIC_PRIORITY);
+    // Above EIC/RTC (priority 1): the RX ISR only moves a byte into the ring (a few us),
+    // and a reed ISR must not hold it off for longer than two characters (174 us).
+    NVIC_SetPriority(SERCOM0_IRQn, 0);
     NVIC_EnableIRQ(SERCOM0_IRQn);
+    dmaBegin();
     ready = true;
     return true;
+  }
+  void dmaBegin() {
+    if (dmaReady) return;
+    PM->AHBMASK.reg |= PM_AHBMASK_DMAC;
+    PM->APBBMASK.reg |= PM_APBBMASK_DMAC;
+    DMAC->CTRL.reg = 0;
+    DMAC->CTRL.reg = DMAC_CTRL_SWRST;
+    while (DMAC->CTRL.bit.SWRST) {}
+    DMAC->BASEADDR.reg = uint32_t(&radioDmaDesc);
+    DMAC->WRBADDR.reg = uint32_t(&radioDmaWriteback);
+    DMAC->CTRL.reg = DMAC_CTRL_DMAENABLE | DMAC_CTRL_LVLEN(0xf);
+    DMAC->CHID.reg = DMAC_CHID_ID(RADIO_DMA_CHANNEL);
+    DMAC->CHCTRLA.reg = 0;
+    DMAC->CHCTRLA.reg = DMAC_CHCTRLA_SWRST;
+    while (DMAC->CHCTRLA.bit.SWRST) {}
+    DMAC->CHCTRLB.reg = DMAC_CHCTRLB_LVL(0) | DMAC_CHCTRLB_TRIGSRC(SERCOM0_DMAC_ID_TX) |
+                        DMAC_CHCTRLB_TRIGACT_BEAT;
+    dmaReady = true;
+  }
+  void dmaStop() {
+    DMAC->CHID.reg = DMAC_CHID_ID(RADIO_DMA_CHANNEL);
+    DMAC->CHCTRLA.reg = 0;
+    while (DMAC->CHCTRLA.bit.ENABLE) {}
   }
   bool failAndRecover(const char *reason, bool injected=false) {
     fault(reason,injected);
@@ -74,15 +114,33 @@ struct RadioUart {
     if (!ready && !begin(baud)) return false;
     const bool injected = injectCompletionTimeout;
     injectCompletionTimeout = false;
-    const size_t length = strlen(text);
+    size_t length = strlen(text);
+    if (length > sizeof(txBuffer) - 2) length = sizeof(txBuffer) - 2;
+    memcpy(txBuffer, text, length);
+    txBuffer[length] = '\r'; txBuffer[length + 1] = '\n';
     const uint32_t start = millis();
     // Time on wire at current baud plus a generous interrupt-latency margin.
     const uint32_t timeout = ((length + 2) * 10000UL + baud - 1) / baud + 100;
-    for (size_t i=0; i<length+2; ++i) {
-      if (!wait([] { return SERCOM0->USART.INTFLAG.bit.DRE; }, start, timeout))
-        return failAndRecover("tx_data_ready");
-      // TX ring is never used; RX ISR cannot write DATA when that ring is empty.
-      SERCOM0->USART.DATA.reg = i<length ? uint8_t(text[i]) : (i==length ? '\r' : '\n');
+    if (!wait([] { return SERCOM0->USART.INTFLAG.bit.DRE; }, start, timeout))
+      return failAndRecover("tx_data_ready");
+    // One block: bytes from txBuffer to DATA, one per DRE. SRCADDR is the end address
+    // when the source increments. TX ring is never used; the RX ISR cannot write DATA.
+    radioDmaDesc.BTCTRL.reg = DMAC_BTCTRL_VALID | DMAC_BTCTRL_BEATSIZE_BYTE | DMAC_BTCTRL_SRCINC |
+                              DMAC_BTCTRL_BLOCKACT_NOACT;
+    radioDmaDesc.BTCNT.reg = uint16_t(length + 2);
+    radioDmaDesc.SRCADDR.reg = uint32_t(txBuffer) + length + 2;
+    radioDmaDesc.DSTADDR.reg = uint32_t(&SERCOM0->USART.DATA.reg);
+    radioDmaDesc.DESCADDR.reg = 0;
+    __DSB();
+    DMAC->CHID.reg = DMAC_CHID_ID(RADIO_DMA_CHANNEL);
+    DMAC->CHINTFLAG.reg = DMAC_CHINTFLAG_TCMPL | DMAC_CHINTFLAG_TERR | DMAC_CHINTFLAG_SUSP;
+    DMAC->CHCTRLA.reg = DMAC_CHCTRLA_ENABLE;
+    // CHID is shared state; nothing else uses the DMAC, so it stays on our channel.
+    if (!wait([] { DMAC->CHID.reg = DMAC_CHID_ID(RADIO_DMA_CHANNEL);
+                   return (DMAC->CHINTFLAG.reg & (DMAC_CHINTFLAG_TCMPL | DMAC_CHINTFLAG_TERR)) != 0; },
+              start, timeout) || DMAC->CHINTFLAG.bit.TERR) {
+      dmaStop(); ++dmaTimeouts;
+      return failAndRecover("tx_dma");
     }
     traceStage(ST_UART_COMPLETE);
     // The core's Serial1 RX/error ISR acknowledges errors with a read-modify-write of

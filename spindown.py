@@ -15,7 +15,8 @@ revolutions are counted exactly, the fit uses d(f^2)/dn = -2a - 2b*f^2 (n = revo
 a straight line in f^2: no time derivatives needed. Lower a = freer bearing.
 
 Spins start at different speeds, so compare a, b and the fixed-band metrics
-(coast from --hi to --lo Hz, revolutions from --hi Hz to the stop), not total revolutions.
+(coast from --hi to --lo Hz, revolutions from --hi Hz to the stop; defaults 2 and 0.5 suit single
+pushes, which reach 2-2.6 rev/s), not total revolutions.
 
   spindown.py --since "2026-11-09 10:00" [--until ...] [--label "608ZZ stock"] [--csv points.csv]
 Times are local ("HH:MM", "YYYY-MM-DD HH:MM[:SS]", or "now"); data comes from the dashboard's
@@ -121,8 +122,8 @@ def main(argv=None):
     p.add_argument('--since', type=when, required=True)
     p.add_argument('--until', type=when, default=when('now'))
     p.add_argument('--label', default='')
-    p.add_argument('--hi', type=float, default=3.0, help='upper speed for the fixed band, rev/s (default 3)')
-    p.add_argument('--lo', type=float, default=1.0, help='lower speed for the fixed band, rev/s (default 1)')
+    p.add_argument('--hi', type=float, default=2.0, help='upper speed for the fixed band, rev/s (default 2)')
+    p.add_argument('--lo', type=float, default=0.5, help='lower speed for the fixed band, rev/s (default 0.5)')
     p.add_argument('--max-period', type=float, default=10.0, help='longer revolutions count as stopped (s)')
     p.add_argument('--gap', type=float, default=20.0, help='no revolution for this long ends a spin (s)')
     p.add_argument('--min-start', type=float, default=1.5, help='ignore spins starting slower (wind), rev/s (default 1.5)')

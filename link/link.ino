@@ -10,7 +10,7 @@
 #define SENSOR 1
 #endif
 
-#define FIRMWARE "W8-standby5"
+#define FIRMWARE "W8-uart1"
 constexpr uint32_t HZ = 32768;
 constexpr uint8_t REED = 5;
 constexpr uint8_t VBAT = A7; // = D9: battery through the Feather's 1:2 divider (do not use D9 otherwise)
@@ -186,7 +186,7 @@ void clockSetup() {
   rtcSync();
   RTC->MODE0.COMP[0].reg = 5 * HZ; rtcSync();
   RTC->MODE0.INTENSET.reg = RTC_MODE0_INTENSET_OVF | RTC_MODE0_INTENSET_CMP0;
-  NVIC_SetPriority(RTC_IRQn, 0);
+  NVIC_SetPriority(RTC_IRQn, 1); // below the radio RX ISR (RadioUart.h)
   NVIC_EnableIRQ(RTC_IRQn);
   RTC->MODE0.CTRL.bit.ENABLE = 1; rtcSync();
 }
@@ -654,7 +654,7 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(RAIN), rainEdge, CHANGE);
     // Reed edges wake the CPU from standby.
     EIC->WAKEUP.reg |= (1u << g_APinDescription[REED].ulExtInt) | (1u << g_APinDescription[RAIN].ulExtInt);
-    NVIC_SetPriority(EIC_IRQn, 0);
+    NVIC_SetPriority(EIC_IRQn, 1); // below the radio RX ISR (RadioUart.h)
     // CHANGE detection needs a running EIC clock even in standby.
     GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_EIC | GCLK_CLKCTRL_GEN_GCLK2 | GCLK_CLKCTRL_CLKEN;
     while (GCLK->STATUS.bit.SYNCBUSY) {}
@@ -762,8 +762,8 @@ void serviceUsb() {
                  (unsigned long)radioUart.lastFlags,(unsigned long)radioUart.lastStatus,
                  (unsigned long)radioUart.lastCtrlA,(unsigned long)radioUart.lastSync);
         logLine(diag);
-        snprintf(diag,sizeof(diag),"# txc_inferred=%lu rtc_sync_timeouts=%lu compare_rearms=%lu radio_resets=%lu consecutive_fails=%lu wdt=16s",
-                 (unsigned long)radioUart.inferredCompletions,(unsigned long)rtcSyncTimeouts,
+        snprintf(diag,sizeof(diag),"# tx_dma_timeouts=%lu txc_inferred=%lu rtc_sync_timeouts=%lu compare_rearms=%lu radio_resets=%lu consecutive_fails=%lu wdt=16s",
+                 (unsigned long)radioUart.dmaTimeouts,(unsigned long)radioUart.inferredCompletions,(unsigned long)rtcSyncTimeouts,
                  (unsigned long)compareRearms,(unsigned long)radioResets,(unsigned long)consecutiveFails);
         logLine(diag);
         snprintf(diag,sizeof(diag),"# clock=%s rtc_stuck=%u failovers=%lu restores=%lu stall_rearms=%lu lost_ms=%lu since_rtc_irq_ms=%lu",
