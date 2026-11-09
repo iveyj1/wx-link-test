@@ -10,7 +10,7 @@
 #define SENSOR 1
 #endif
 
-#define FIRMWARE "W8-standby1"
+#define FIRMWARE "W8-standby3"
 constexpr uint32_t HZ = 32768;
 constexpr uint8_t REED = 5;
 constexpr uint8_t VBAT = A7; // = D9: battery through the Feather's 1:2 divider (do not use D9 otherwise)
@@ -57,6 +57,9 @@ uint32_t lastCrystalTryMs = 0, xoscTestUntil = 0; // RTC wall milliseconds (see 
 // early-warning interrupt (8 s after the last kick, on OSCULP32K) wakes the clock monitor.
 constexpr uint32_t WDT_EARLY_MS = 8000;
 bool deepSleep = false, usbSeen = false;
+// !xosc-test deep detaches USB so the host cannot switch the sensor back to light sleep
+// mid-test; it re-attaches once the crystal is restored.
+bool usbDetachedForTest = false, testForcesDeep = false;
 volatile bool wdtEarly = false;
 volatile uint32_t wdtEarlyMs = 0;
 uint32_t wdtEarlyWakes = 0;
@@ -71,17 +74,20 @@ void rtcSync() {
 // Caller masks interrupts (or is in a non-preemptible ISR).
 uint64_t ticksLocked() {
   if (rtcStuck) return lastTicks;
+  // Reading COUNT while its read sync is still pending stalls the bus until the clock returns
+  // (a stopped crystal: watchdog reset). So check after every sync, before touching COUNT.
   RTC->MODE0.READREQ.reg = RTC_READREQ_RREQ | RTC_READREQ_ADDR(0x10);
   rtcSync();
+  if (rtcStuck) return lastTicks;
   uint32_t low = RTC->MODE0.COUNT.reg;
   uint32_t high = rtcHigh;
   if (RTC->MODE0.INTFLAG.bit.OVF) {
     ++high;
     RTC->MODE0.READREQ.reg = RTC_READREQ_RREQ | RTC_READREQ_ADDR(0x10);
     rtcSync();
+    if (rtcStuck) return lastTicks;
     low = RTC->MODE0.COUNT.reg;
   }
-  if (rtcStuck) return lastTicks;
   return lastTicks = (uint64_t(high) << 32) | low;
 }
 uint64_t ticks() {
@@ -621,7 +627,7 @@ bool usbHostActive() {
 // Once a USB host is seen, stay in light sleep for the session (USB and !status keep
 // working). Plugging USB in later: press reset once, or wait for the next report to notice.
 void updateSleepMode() {
-  if (usbLive) usbSeen = true;
+  if (usbLive && !usbDetachedForTest) usbSeen = true;
   deepSleep = SENSOR && !usbSeen;
 }
 void setup() {
@@ -693,11 +699,19 @@ void serviceUsb() {
         radioUart.injectCompletionTimeout = true;
         forceReport = true; reportDue = true;
         logLine("# injecting one UART completion timeout; automatic retry expected in 5 s");
-      } else if (!strcmp(input,"!xosc-test")) {
-        // Simulate a stopped crystal for 90 s (also removes the DFLL reference, as a real stop does).
+      } else if (!strcmp(input,"!xosc-test") || (!strcmp(input,"!xosc-test deep") && SENSOR)) {
+        // Simulate a stopped crystal for 90 s (also removes the DFLL reference, as a real stop
+        // does). "deep" forces deep standby and detaches USB until the crystal is restored
+        // (the next crystal retry, up to ~10 min after failover); read !status then.
+        testForcesDeep = input[10] == ' ';
+        if (testForcesDeep) {
+          logLine("# xosc-test deep: USB detaching; crystal off 90 s in deep standby; USB returns after the crystal is restored (up to ~11 min)");
+          Serial.flush(); delay(50);
+          USBDevice.detach(); usbLive = false; usbDetachedForTest = true;
+          usbSeen = false; updateSleepMode();
+        } else logLine("# xosc-test: crystal oscillator disabled for 90 s; expect failover within ~8 s");
+        xoscTestUntil = wallMs() + 90000; // while the RTC still runs
         SYSCTRL->XOSC32K.bit.ENABLE = 0;
-        xoscTestUntil = wallMs() + 90000;
-        logLine("# xosc-test: crystal oscillator disabled for 90 s; expect failover within ~8 s");
       } else if (!strcmp(input,"!clock-retry")) {
         lastCrystalTryMs = wallMs() - CRYSTAL_RETRY_MS;
         logLine("# crystal retry requested");
@@ -772,6 +786,11 @@ void loop() {
   wdtKick();
   serviceUsb();
   clockMonitor();
+  if (usbDetachedForTest && !xoscTestUntil && !onInternalClock && !rtcStuck) {
+    usbDetachedForTest = false;
+    if (testForcesDeep) usbSeen = false; // stay deep until a report sees the host again
+    USBDevice.attach();
+  }
   if (SENSOR) {
     bool due;
     noInterrupts();
