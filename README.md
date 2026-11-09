@@ -148,6 +148,10 @@ Handling can't be told apart from weather afterwards: lowering the mast spins th
 * **USB replies are gated:** the firmware only writes to USB after seeing USB frames, rechecked about every 5 s. Wait about 7 s after opening the port before sending a command.
 * **Keep the project in git with a remote.** The working directory was once deleted with `rm -rf`; it was rebuilt from session transcripts and the Arduino build cache, and two tests had to be rewritten.
 
+## Spin-down tests (bearings)
+
+Spin the cups by hand indoors (inside a maintenance window), let them stop completely, wait ~20 s, repeat about 5 times per bearing, then run `python3 spindown.py --since HH:MM [--until HH:MM] --label "608ZZ stock" [--csv points.csv]`. It splits the spins, and fits `df/dt = -a - b·f²` from the exact revolution count (`d(f²)/dn` is linear in `f²`), using about one speed point per second (the report rate). `a` (rev/s²) is the constant friction, mostly the bearing; `b` (1/rev) is the drag on the cups. Compare `a`, `b` and the fixed-band metrics (coast time 3 → 1 rev/s, revolutions from 3 rev/s to the stop), not total revolutions: hand spins start at different speeds. No firmware change is needed. `test_spindown.py` checks the fit on simulated spins sampled like the sensor's reports.
+
 ## USB commands (sensor, 115200 baud, newline terminated)
 
 | Command | Effect |
