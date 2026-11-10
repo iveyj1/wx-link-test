@@ -103,6 +103,17 @@ so a spin from f₀ stops after ln(1 + b·f₀²/a) / 2b revolutions.</p>
 <li>A third term proportional to speed (grease drag) made the 608ZZ fit unstable and no better, so it is left out. A heavily greased bearing that the two-term model cannot fit would show as curvature on the fit chart.</li>
 <li>b is for still air indoors; it is not a wind calibration.</li>
 </ul>
+<h3>Starting speed</h3>
+<p>The drag term fixes the size of aerodynamic forces relative to the rotor's inertia, so bearing friction can be
+expressed as the wind that would just overcome it on stationary cups. Equating the still-air drag
+(cups moving convex-side first), the friction torque and the net torque of wind on stationary cups, the inertia,
+air density and cup area cancel:</p>
+<div class="eq">V_start ≈ 2πR · √(a/b) · √(N·C_x / κ)</div>
+<p>R = 185 mm (axis to cup centre), N = 3 cups, C_x ≈ 0.38 (hemisphere, convex side first), and κ ≈ 0.7–1.3, the net
+starting coefficient, which depends on where the cups stand. The cards show this as <b>Start (kinetic)</b>.
+It uses the friction measured while turning; a bearing at rest needs more to break away (often 2–5×, so ×1.4–2.2 on
+V), and the magnet's pull on the reed switch adds a detent: the last revolutions before a stop are strongly
+lopsided. Treat it as a lower bound; a tilt test (smallest weight on a cup that starts the rotor) measures the real one.</p>
 <h3>Running a test</h3>
 <ol>
 <li>Start a maintenance window on the dashboard, then bring the sensor indoors.</li>
@@ -135,6 +146,11 @@ function fAt(a,b,f1,t){ // speed t seconds after f1
  const k=Math.sqrt(b/a), v=Math.atan(f1*k)-Math.sqrt(a*b)*t; return v<=0?0:Math.tan(v)/k;
 }
 const REF=2; // rev/s: time origin of the speed chart
+// Starting-speed estimate (kinetic friction only): V = 2πR·√(a/b)·√(N·Cx/κ).
+// R = axis to cup centre (measured ~185 mm, Nov 9), 3 hemispherical cups, convex Cx ≈ 0.38,
+// net starting coefficient κ ≈ 0.7–1.3 depending on where the cups stand.
+const ROTOR_R=0.185, CUPS=3, CX=0.38, KAPPA=[1.3,0.7];
+function startSpeed(a,b){if(!(a>0&&b>0))return null;const u=2*Math.PI*ROTOR_R*Math.sqrt(a/b);return KAPPA.map(k=>u*Math.sqrt(CUPS*CX/k));}
 function shift(set,spin){ // seconds to add so the spin's first point sits on its set's curve
  const a=set.summary.a.mean,b=set.summary.b.mean,f0=spin.points[0][2];
  return f0<=REF?tBetween(a,b,REF,f0):-tBetween(a,b,f0,REF);
@@ -236,6 +252,7 @@ function render(){
   const rel=ref&&ref!==s&&S.a.mean!=null&&ref.summary.a.mean?` (${((S.a.mean/ref.summary.a.mean-1)*100).toFixed(0)}% vs reference)`:'';
   return `<div class="card"><div class="label"><span class="swatch" style="background:${color(i)}"></span>${esc(s.label)}${s.reference?' <span class="badge">reference</span>':''}</div>
   <dl class="kv"><dt>Friction a</dt><dd>${pm(S.a,4)} rev/s²${rel}</dd><dt>Drag b</dt><dd>${pm(S.b,4)} /rev</dd>
+  <dt>Start (kinetic)</dt><dd>${(v=>v?`${v[0].toFixed(2)}–${v[1].toFixed(2)} m/s · ${(v[0]*1.944).toFixed(1)}–${(v[1]*1.944).toFixed(1)} kn`:'—')(startSpeed(S.a.mean,S.b.mean))}</dd>
   <dt>Coast 2→0.5</dt><dd>${pm(S.coast,1)} s</dd><dt>Revs 2→stop</dt><dd>${pm(S.revs_hi,1)}</dd><dt>Spins</dt><dd>${s.spins.length}</dd></dl>
   ${s.note?`<div class="caption" style="margin-top:8px">${esc(s.note)}</div>`:''}</div>`;}).join('');
  strip($('stripA'),'a',4,'rev/s²');strip($('stripB'),'b',4,'/rev');strip($('stripC'),'coast',1,'s');
