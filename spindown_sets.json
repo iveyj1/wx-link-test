@@ -1,8 +1,6 @@
 [
-  {"label": "608ZZ stock · finger-wound", "start": "2026-11-09 17:54:00", "end": "2026-11-09 18:02:00",
-   "note": "Uxcel 608ZZ unmodified, indoors. Firmware W8-standby5: ~10% of reports lost to the UART bug, so spins have gaps."},
-  {"label": "608ZZ stock · single push", "start": "2026-11-09 18:11:00", "end": "2026-11-09 18:24:00",
-   "note": "Same bearing, single push, on USB. Still W8-standby5 (gaps)."},
-  {"label": "608ZZ stock · single push, W8-uart1", "start": "2026-11-09 18:33:00", "end": "2026-11-09 18:40:30",
-   "note": "Same bearing, after the UART fix: every revolution reported.", "reference": true}
+  {"label": "608ZZ stock · finger-wound", "start": "2026-11-09 17:54:00", "end": "2026-11-09 18:02:00", "note": "Uxcel 608ZZ unmodified, indoors. Firmware W8-standby5: ~10% of reports lost to the UART bug, so spins have gaps."},
+  {"label": "608ZZ stock · single push", "start": "2026-11-09 18:11:00", "end": "2026-11-09 18:24:00", "note": "Same bearing, single push, on USB. Still W8-standby5 (gaps)."},
+  {"label": "608ZZ stock · single push, W8-uart1", "start": "2026-11-09 18:33:00", "end": "2026-11-09 18:40:30", "note": "Same bearing, after the UART fix: every revolution reported.", "reference": true},
+  {"label": "608CE", "start": "2026-11-09 21:02:00", "end": "2026-11-09 21:17:00", "note": "608CE bearing, indoors, single pushes, W8-uart1. Spins 1-3 peaked below 2 rev/s (no band metrics)."}
 ]
