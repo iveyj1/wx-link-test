@@ -5,12 +5,13 @@
 <title>Wind and Rain</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='none' stroke='%2370e8c2' stroke-width='3' d='M1 20L8 20L12 7L18 26L23 12L31 12'/%3E%3C/svg%3E">
 <style>
-:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0c1520;color:#e6eef6}*{box-sizing:border-box}body{margin:0}main{max-width:1600px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:24px;margin:0}h2{font-size:17px;margin:0}.eyebrow{font-size:12px;letter-spacing:2px;color:#78a9c6;text-transform:uppercase}.muted,small{color:#9cafbf}.status{padding:8px 14px;border:1px solid #354b60;border-radius:20px;font-size:13px}.ok{color:#71e8b0}.maint{margin-top:16px;padding:10px 14px;border:1px solid #8a6a3a;border-radius:8px;background:#2a2216;color:#ffc77c;font-size:14px}.warn{color:#ffc77c}.cards{display:grid;grid-template-columns:2fr 1fr 1fr 1.6fr;gap:14px;margin:24px 0}.card{background:#142230;border:1px solid #253b4e;border-radius:12px;padding:18px;min-width:0}.number{font-size:34px;font-variant-numeric:tabular-nums;margin:8px 0}.primary .number{font-size:48px;color:#70e8c2}.number small{font-size:16px}.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px;margin-top:10px;font-variant-numeric:tabular-nums}.kv dt{color:#9cafbf}.kv dd{margin:0;overflow-wrap:anywhere}.kv .warn{color:#ffc77c}.caption{font-size:12px;color:#9cafbf;overflow-wrap:anywhere}.controls{display:flex;flex-wrap:wrap;align-items:end;gap:14px;padding:18px 0}label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#9cafbf}input,select,button{font:inherit;color:#e6eef6;background:#152839;border:1px solid #39536a;border-radius:6px;padding:8px}input{width:110px}button{cursor:pointer}button:hover{background:#26435a}button.active{border-color:#70e8c2;color:#70e8c2}.nav{display:flex;gap:6px;margin-left:auto}.chartbox{background:#101e2b;border:1px solid #294053;border-radius:12px;padding:16px}.charthead{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}canvas{display:block;width:100%;touch-action:pan-y}.foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:12px;color:#9cafbf;margin-top:12px}.detail{font-size:13px;line-height:1.8;margin-top:18px;overflow-wrap:anywhere}#error{color:#ffbd96;margin-top:10px}#tooltip{position:fixed;display:none;pointer-events:none;background:#20394b;border:1px solid #739bb6;border-radius:6px;padding:10px;font-size:12px;white-space:pre-line;z-index:2}a{color:#70e8c2}@media(max-width:1000px){main{padding:14px}.cards{grid-template-columns:1fr 1fr}.cards .wide{grid-column:1/-1}.primary .number{font-size:38px}.number{font-size:28px}header{align-items:start}.nav{margin-left:0}.chartbox{padding:8px}}
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0c1520;color:#e6eef6}*{box-sizing:border-box}body{margin:0}main{max-width:1600px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:20px}h1{font-size:24px;margin:0}h2{font-size:17px;margin:0}.eyebrow{font-size:12px;letter-spacing:2px;color:#78a9c6;text-transform:uppercase}.muted,small{color:#9cafbf}.status{padding:8px 14px;border:1px solid #354b60;border-radius:20px;font-size:13px}.ok{color:#71e8b0}.maint{margin-top:16px;padding:10px 14px;border:1px solid #8a6a3a;border-radius:8px;background:#2a2216;color:#ffc77c;font-size:14px}.fault{margin-top:16px;padding:10px 14px;border:1px solid #a04848;border-radius:8px;background:#2c1717;color:#ff9a9a;font-size:14px}.warn{color:#ffc77c}.cards{display:grid;grid-template-columns:2fr 1fr 1fr 1.6fr;gap:14px;margin:24px 0}.card{background:#142230;border:1px solid #253b4e;border-radius:12px;padding:18px;min-width:0}.number{font-size:34px;font-variant-numeric:tabular-nums;margin:8px 0}.primary .number{font-size:48px;color:#70e8c2}.number small{font-size:16px}.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px;margin-top:10px;font-variant-numeric:tabular-nums}.kv dt{color:#9cafbf}.kv dd{margin:0;overflow-wrap:anywhere}.kv .warn{color:#ffc77c}.caption{font-size:12px;color:#9cafbf;overflow-wrap:anywhere}.controls{display:flex;flex-wrap:wrap;align-items:end;gap:14px;padding:18px 0}label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#9cafbf}input,select,button{font:inherit;color:#e6eef6;background:#152839;border:1px solid #39536a;border-radius:6px;padding:8px}input{width:110px}button{cursor:pointer}button:hover{background:#26435a}button.active{border-color:#70e8c2;color:#70e8c2}.nav{display:flex;gap:6px;margin-left:auto}.chartbox{background:#101e2b;border:1px solid #294053;border-radius:12px;padding:16px}.charthead{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px}canvas{display:block;width:100%;touch-action:pan-y}.foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:12px;color:#9cafbf;margin-top:12px}.detail{font-size:13px;line-height:1.8;margin-top:18px;overflow-wrap:anywhere}#error{color:#ffbd96;margin-top:10px}#tooltip{position:fixed;display:none;pointer-events:none;background:#20394b;border:1px solid #739bb6;border-radius:6px;padding:10px;font-size:12px;white-space:pre-line;z-index:2}a{color:#70e8c2}@media(max-width:1000px){main{padding:14px}.cards{grid-template-columns:1fr 1fr}.cards .wide{grid-column:1/-1}.primary .number{font-size:38px}.number{font-size:28px}header{align-items:start}.nav{margin-left:0}.chartbox{padding:8px}}
 </style>
 </head>
 <body><main>
 <header><div><div class="eyebrow">Live instrument</div><h1>Anemometer helicorder</h1></div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><a href="/spindown.html">Spin-down tests</a><button id="maintBtn" title="Hide data while the sensor is handled, moved or bench-tested">Start maintenance</button><div id="status" class="status warn" role="status">Connecting…</div></div></header>
 <div id="maintBanner" class="maint" role="status" hidden></div>
+<div id="faultBanner" class="fault" role="alert" hidden></div>
 <section class="cards" aria-label="Latest measurements">
 <div class="card primary"><div class="muted" id="speedTitle">Wind speed</div><div class="number"><span id="hz">—</span> <small id="speedUnit">kn</small></div><div class="caption" id="freshness">Waiting for a completed revolution</div></div>
 <div class="card"><div class="muted">Rotation speed</div><div class="number"><span id="rpm">—</span> <small>RPM</small></div><div class="caption">60 × revolution frequency</div></div>
@@ -84,7 +85,7 @@
 <div id="error" role="alert"></div>
 <div class="detail muted" id="details">Waiting for receiver…</div>
 <p class="caption">Rain: each tip is timed by the sensor and sent immediately; totals follow your browser's local midnight. If several tips arrive in one packet after radio loss, they are all credited at the time of the latest one.</p>
-<p class="caption">“Instantaneous” means the latest completed full-revolution measurement, not an average of equal half-turns. Updates are radio-limited to about once per second. Idle heartbeat: 60 s. Gaps are not zero wind. Maintenance windows (shaded) are recorded but left out of graphs, averages and rain totals; manage them with the button above or <code>maint.py</code>. History retained for 7 days from server startup onward; only transmitted measurements are available. Times are estimated from reception time minus sensor-reported measurement age.</p>
+<p class="caption">“Instantaneous” means the latest completed full-revolution measurement, not an average of equal half-turns. Updates are radio-limited to about once per second. Idle heartbeat: 60 s. Gaps are not zero wind. Maintenance windows (shaded) are recorded but left out of graphs, averages and rain totals; manage them with the button above or <code>maint.py</code>. Sensor faults (red shading; <code>fault.py</code>) do the same for one sensor only, e.g. a disconnected anemometer wire that reads as calm. History retained for 7 days from server startup onward; only transmitted measurements are available. Times are estimated from reception time minus sensor-reported measurement age.</p>
 </main><div id="tooltip"></div>
 <script src="/math.js"></script>
 <script>
@@ -118,18 +119,29 @@ const clock=()=>Date.now()/1000+offset;
 const windows=()=>state?.maintenance||[];
 const winEnd=w=>w.end??clock();
 const inMaint=t=>t!=null&&windows().some(w=>t>=w.start&&t<winEnd(w));
+// Sensor faults (fault.py): one sensor's data is wrong, e.g. a disconnected wire reading calm.
+const SENSOR_NAMES={wind:'Anemometer',rain:'Rain gauge',baro:'Barometer'};
+const faults=sensor=>(state?.faults||[]).filter(f=>f.sensor===sensor);
+const activeFault=sensor=>(state?.faults_active||[]).find(f=>f.sensor===sensor);
+const inFault=(sensor,t)=>t!=null&&faults(sensor).some(f=>t>=f.start&&t<winEnd(f));
 const hm=t=>new Date(t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
 function paintMaint(){
+ const fa=state?.faults_active||[];
+ $('faultBanner').hidden=!fa.length;
+ $('faultBanner').textContent=fa.map(f=>`⚠ ${SENSOR_NAMES[f.sensor]} fault since ${hm(f.start)}${f.note?` (${f.note})`:''}: its readings are not trusted and are left out of its graphs and totals.`).join(' ');
  const a=state?.maintenance_active;
  $('maintBtn').textContent=a?'End maintenance':'Start maintenance';$('maintBtn').className=a?'active':'';
  $('maintBanner').hidden=!a;
  if(a)$('maintBanner').textContent=`Maintenance since ${hm(a.start)}${a.note?` (${a.note})`:''}: data is still recorded but hidden from graphs and rain totals (the cards still show live readings). Press End maintenance when the sensor is back in service.`;
 }
-// Shade maintenance windows overlapping [a,b) on a canvas row.
-function shadeMaint(c,a,b,X,y0,h){
- for(const w of windows()){const s=Math.max(a,w.start),e=Math.min(b,winEnd(w));if(e<=s)continue;
-  const x0=X(s),x1=X(e);c.fillStyle='rgba(228,178,108,.13)';c.fillRect(x0,y0,Math.max(1,x1-x0),h);
-  if(x1-x0>70){c.fillStyle='#c9a46a';c.textAlign='left';c.font='11px system-ui';c.fillText('maintenance',x0+4,y0+10,x1-x0-8);}}
+// Shade maintenance windows, and this sensor's faults, overlapping [a,b) on a canvas row.
+function shadeMaint(c,a,b,X,y0,h,sensor){
+ const marks=[...windows().map(w=>[w,'rgba(228,178,108,.13)','#c9a46a','maintenance']),
+  ...(sensor?faults(sensor):[]).map(f=>[f,'rgba(229,96,96,.16)','#ff9a9a',`${SENSOR_NAMES[sensor].toLowerCase()} fault${f.note?' · '+f.note:''}`])];
+ for(const [w,fill,ink,label] of marks){const s=Math.max(a,w.start),e=Math.min(b,winEnd(w));if(e<=s)continue;
+  const x0=X(s),x1=X(e);c.fillStyle=fill;c.fillRect(x0,y0,Math.max(1,x1-x0),h);
+  if(x1-x0>70){c.fillStyle=ink;c.textAlign='left';c.font='11px system-ui';
+   const text=c.measureText(label).width<=x1-x0-8?label:label.split(' · ')[0];c.fillText(text,x0+4,y0+10,x1-x0-8);}}
 }
 const PRESETS=[10,30,60,300,600,1800,3600,7200,10800,21600,43200,86400];
 // Strip boundaries fall on local-time multiples of the duration (24 h strips start at midnight).
@@ -163,10 +175,10 @@ async function load(){
 // Calm start for the live reading, or null (link must be fresh: a stale link is not calm).
 function liveCalm(now,chart=false){
  const p=state?.latest;
- if(!p||!state.connected||p.pulse_at==null||now-p.received>75||(chart&&state.maintenance_active))return null;
+ if(!p||!state.connected||p.pulse_at==null||now-p.received>75||(chart&&state.maintenance_active)||activeFault('wind'))return null;
  const c=WindMath.liveCalmStart(p.pulse_at,p.count,now,CALM_S);
  // Calm cannot be drawn inside a maintenance window: start it where the last window ended.
- const ended=Math.max(0,...windows().filter(w=>w.end!=null&&w.end<=now).map(w=>w.end));
+ const ended=Math.max(0,...[...windows(),...faults('wind')].filter(w=>w.end!=null&&w.end<=now).map(w=>w.end));
  return c==null?null:Math.max(c,ended);
 }
 function paintMetrics(){
@@ -186,6 +198,8 @@ function paintMetrics(){
  $('status').textContent=text;$('status').className='status '+(good?'ok':'warn');
  paintMaint();
  if(state.maintenance_active){$('status').textContent='Maintenance · '+text;$('status').className='status warn';}
+ const wf=activeFault('wind');
+ if(wf){$('status').textContent='Anemometer fault · '+$('status').textContent;$('status').className='status warn';}
  if(calmFrom!=null){
   // Same argument as the graph: no closure for over CALM_S s means < 0.5 rev / CALM_S, shown as 0.
   $('hz').textContent=pad(0,unitDec(),3);$('rpm').textContent=pad(0,1,3);
@@ -198,7 +212,8 @@ function paintMetrics(){
  $('period').textContent=p?.hz==null?'—':pad(p.period_s,2,3);
  $('pair').textContent=`A ${p?.hz==null?'—':fmt(p.a_s,3)+' s'} · B ${p?.hz==null?'—':fmt(p.b_s,3)+' s'}`;
  $('hz').style.opacity=good?'1':'.5';
- $('freshness').textContent=(age==null?'First accepted edge is reference; third completes a revolution':`${good?'Latest':'Last known'} measurement · ${age.toFixed(1)} s old`)+(state.maintenance_active?' · maintenance: not graphed':'');
+ $('freshness').textContent=(age==null?'First accepted edge is reference; third completes a revolution':`${good?'Latest':'Last known'} measurement · ${age.toFixed(1)} s old`)+(state.maintenance_active?' · maintenance: not graphed':'')+(wf?' · ANEMOMETER FAULT: not trusted, not graphed':'');
+ if(wf)$('hz').style.opacity='.35';
  }
  $('details').textContent=p?`Session ${p.session} · Sequence ${p.seq} · Completed revolutions ${p.revolutions} · Electrical pulses ${p.count}${p.raw_edges!=null?` · Raw D5 edges ${p.raw_edges}`:''}${p.rain_raw_edges!=null?` · Raw D10 edges ${p.rain_raw_edges}`:''}`:`${state.error||'Receiver open; no packets yet.'}`;
  paintDiag(p,radioAge);
@@ -268,7 +283,7 @@ function draw(){
    const elapsed=duration*j/ticks, [div,u]=duration<120?[1,'s']:duration<=10800?[60,'m']:[3600,'h'], value=elapsed/div;
    ctx.fillText(`${value.toFixed(Number.isInteger(value)?0:1)}${u}`,x,base+12);
   }
-  shadeMaint(ctx,rowStart,rowStart+duration,t=>left+(t-rowStart)/duration*plotWidth,y+4,plotH+4);
+  shadeMaint(ctx,rowStart,rowStart+duration,t=>left+(t-rowStart)/duration*plotWidth,y+4,plotH+4,'wind');
   const rowPoints=[];let before=null,after=null;
   for(const p of items){if(p.t<rowStart)before=p;else if(p.t<rowStart+duration)rowPoints.push(p);else{after=p;break;}}
   if(before)rowPoints.unshift(before);if(after)rowPoints.push(after);
@@ -369,6 +384,7 @@ function paintSince(){
  if(d.rain_logging_since==null||d.rain_logging_since>d.start)warn.push(d.rain_logging_since==null?'no rain logging yet':`rain logging began ${dt(d.rain_logging_since)}; nothing before that is counted`);
  if(d.restarts.length)warn.push(`sensor restarted ${d.restarts.length}× (${d.restarts.slice(0,3).map(dt).join(', ')}${d.restarts.length>3?', …':''}): tips not yet reported before a reset are lost`);
  if(d.maintenance?.length)warn.push(`${d.maintenance.length} maintenance window${d.maintenance.length>1?'s':''} excluded (${d.maintenance.slice(0,3).map(w=>`${dt(w.start)}–${w.end==null?'now':dt(w.end)}`).join(', ')}${d.maintenance.length>3?', …':''})`);
+ if(d.faults?.length)warn.push(`${d.faults.length} rain gauge fault${d.faults.length>1?'s':''} excluded (${d.faults.slice(0,3).map(f=>`${dt(f.start)}–${f.end==null?'now':dt(f.end)}`).join(', ')}${d.faults.length>3?', …':''})`);
  if(d.gaps.length)warn.push(`no data ${d.gaps.slice(0,3).map(g=>`${dt(g.start)} for ${durText(g.end-g.start)}`).join(', ')}${d.gaps.length>3?', …':''}: tips are recovered unless the sensor restarted`);
  $('sinceWarn').textContent=warn.length?'⚠ '+warn.join(' · '):'';
 }
@@ -383,6 +399,8 @@ function paintRain(){
  if(age!=null&&age>3600){rate=0;note='no tip for over 1 h';}
  else if(p.rain_interval_s){rate=mmPerTip*3600/Math.max(p.rain_interval_s,age);note=age>p.rain_interval_s?'decaying: no tip since; upper bound':'from the last two tips';}
  if(inMaint(p.rain_at))note+=' · last tip during maintenance: not in totals';
+ if(inFault('rain',p.rain_at))note+=' · last tip during a gauge fault: not in totals';
+ if(activeFault('rain'))note='RAIN GAUGE FAULT · '+note;
  $('rainRate').textContent=rate==null?'—':rainPad(rate,3);$('rainRateNote').textContent=note;
  $('rainLast').textContent=p.rain_at==null?'none since start':`${timeText(p.rain_at)} · ${age<120?age.toFixed(0)+' s':age<7200?(age/60).toFixed(0)+' min':(age/3600).toFixed(1)+' h'} ago`;
  $('rainGauge').textContent=`Gauge D10 ${p.rain_pin?'open':'closed'} · ${p.rain_tips} tips since sensor start · raw D10 edges ${p.rain_raw_edges}`;
@@ -408,7 +426,7 @@ function drawRain(){
   rctx.fillText(`${new Date(a*1000).toLocaleDateString([],{weekday:'short',month:'short',day:'numeric'})} · ${rainFmt(dayTips[i]*mmPerTip)} ${rainUnits}`,X(a)+4,top-12,X(b)-X(a)-8);
  });
  rctx.fillStyle='#839caf';rctx.textAlign='left';rctx.fillText('00:00',X(first),top+plotH+16);rctx.textAlign='right';rctx.fillText('24:00',X(end),top+plotH+16);
- shadeMaint(rctx,first,end,X,top,plotH);
+ shadeMaint(rctx,first,end,X,top,plotH,'rain');
  rctx.fillStyle='rgba(120,169,198,.35)';
  hours.forEach((n,h)=>{if(!n)return;const x0=X(first+h*3600),x1=X(Math.min(end,first+(h+1)*3600)),y=Y(n*mmPerTip);rctx.fillRect(x0+1,y,Math.max(1,x1-x0-2),top+plotH-y);});
  // Each day's line starts from 0 at its midnight.
@@ -547,6 +565,7 @@ function paintWx(){
  $('pNow').textContent=have?pad(hPa(p.pressure_pa),1,4):'—';
  $('tNow').textContent=have?pad(tVal(p.temp_c),1,3):'—';
  $('pNote').textContent=have?`at last packet, ${durText(Math.max(0,now-p.received))} ago${altitude?` · station ${stationHpa(p.pressure_pa).toFixed(1)} hPa`:''} · = ${(hPa(p.pressure_pa)/33.8639).toFixed(2)} inHg${pOffset?` · correction ${pOffset>0?'+':''}${pOffset} hPa`:''}`:p&&p.version>='W7'?'No reading: BMP180 not answering':'Needs sensor firmware W7 and a BMP180';
+ if(activeFault('baro'))$('pNote').textContent='BAROMETER FAULT: not trusted · '+$('pNote').textContent;
  const ago=pressureAgo(now,10800);
  if(have&&ago!=null){const d=hPa(p.pressure_pa)-hPa(ago);
   $('pTrend').textContent=(d>=0?'+':'−')+pad(Math.abs(d),1,2).trimStart();
@@ -569,7 +588,7 @@ function drawBand(cv,pts,start,span,fmt,label,color){
  for(let j=0;j<=6;j++){const t=start+span*j/6,x=X(t);c.strokeStyle='#223746';c.beginPath();c.moveTo(x,top);c.lineTo(x,top+plotH);c.stroke();
   c.fillStyle='#839caf';c.textAlign=j===0?'left':j===6?'right':'center';
   c.fillText(span>86400?new Date(t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',hour12:false}):timeText(t).slice(0,5),x,top+plotH+16);}
- shadeMaint(c,start,start+span,X,top,plotH);
+ shadeMaint(c,start,start+span,X,top,plotH,'baro');
  const w=Math.max(60,span/720), gap=(a,b)=>b.t0-a.t0>3*w;
  c.fillStyle=color+'2e';
  for(const p of pts){const x0=X(p.t0),x1=X(p.t0+w);c.fillRect(x0,Y(p.hi),Math.max(1,x1-x0),Math.max(1,Y(p.lo)-Y(p.hi)));}

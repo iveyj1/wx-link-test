@@ -24,8 +24,25 @@ VERSIONS = ('W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8')
 # totals leave out samples whose revolution overlaps a window and tips inside one.
 # end NULL = in progress.
 IN_WINDOW = ('EXISTS (SELECT 1 FROM maintenance m WHERE {lo} < COALESCE(m.end, 1e18) AND {hi} >= m.start)')
-SAMPLE_OK = 'NOT ' + IN_WINDOW.format(lo='t - period', hi='t')
-TIP_OK = 'NOT ' + IN_WINDOW.format(lo='t', hi='t')
+# Sensor faults (fault.py): one sensor's readings are wrong (e.g. a disconnected reed wire reads
+# as calm). Left out of that sensor's graphs and totals only, like a maintenance window.
+SENSORS = ('wind', 'rain', 'baro')
+IN_FAULT = ("EXISTS (SELECT 1 FROM faults f WHERE f.sensor = '{sensor}' "
+            "AND {lo} < COALESCE(f.end, 1e18) AND {hi} >= f.start)")
+
+
+def _ok(sensor, lo, hi):
+    return f"NOT {IN_WINDOW.format(lo=lo, hi=hi)} AND NOT {IN_FAULT.format(sensor=sensor, lo=lo, hi=hi)}"
+
+
+SAMPLE_OK = _ok('wind', 't - period', 't')
+TIP_OK = _ok('rain', 't', 't')
+WEATHER_OK = _ok('baro', 't', 't')
+
+
+FAULTS_TABLE = '''CREATE TABLE IF NOT EXISTS faults (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, sensor TEXT NOT NULL CHECK (sensor IN ('wind', 'rain', 'baro')),
+    start REAL NOT NULL, end REAL, note TEXT NOT NULL DEFAULT '')'''
 
 
 class Store:
@@ -73,6 +90,7 @@ class Store:
           CREATE TABLE IF NOT EXISTS maintenance (
             id INTEGER PRIMARY KEY AUTOINCREMENT, start REAL NOT NULL, end REAL, note TEXT NOT NULL DEFAULT '');
         ''')
+        self.db.execute(FAULTS_TABLE)
         if not self.db.execute('SELECT 1 FROM runs LIMIT 1').fetchone():
             self.backfill_runs()
         if 'clock' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
@@ -201,6 +219,14 @@ class Store:
                 'SELECT id, start, end, note FROM maintenance WHERE COALESCE(end, 1e18) > ? '
                 'ORDER BY start LIMIT 200', (since,))]
 
+    def faults(self, since=None, sensor=None):
+        """Sensor faults ending after `since` (default: the last 14 days), oldest first."""
+        since = time.time() - 14 * 86400 if since is None else since
+        with self.lock:
+            return [dict(r) for r in self.db.execute(
+                'SELECT id, sensor, start, end, note FROM faults WHERE COALESCE(end, 1e18) > ? AND (? IS NULL OR sensor = ?) '
+                'ORDER BY start LIMIT 200', (since, sensor, sensor))]
+
     def maintenance(self, action, note='', now=None):
         """Start or stop a window now (dashboard). Retroactive edits are in maint.py."""
         now = time.time() if now is None else now
@@ -235,10 +261,11 @@ class Store:
         return result
 
     def status(self):
-        windows = self.windows()
+        windows, faults = self.windows(), self.faults()
         return dict(connected=self.connected, error=self.error, latest=self.latest,
                     last_serial=self.last_serial, malformed=self.malformed, now=time.time(),
-                    link=self.link(), maintenance=windows, maintenance_active=next((w for w in windows if w['end'] is None), None))
+                    link=self.link(), maintenance=windows, maintenance_active=next((w for w in windows if w['end'] is None), None),
+                    faults=faults, faults_active=[f for f in faults if f['end'] is None])
 
     def condensed(self, start, end, bucket, calm):
         """Long ranges: per time bucket, the slowest and fastest real samples (so extremes and
@@ -286,14 +313,15 @@ class Store:
 
     def weather(self, start, end, bucket):
         """Pressure (Pa) and enclosure temperature per time bucket: mean, min, max. Maintenance
-        windows are left out (handling and bench tests change both)."""
+        windows and barometer faults are left out (handling and bench tests change both)."""
         with self.lock:
             rows = self.db.execute(
                 'SELECT :s + CAST((t - :s) / :b AS INTEGER) * :b AS t0, AVG(pressure_pa) AS p, MIN(pressure_pa) AS plo, '
                 'MAX(pressure_pa) AS phi, AVG(temp_c) AS c, MIN(temp_c) AS clo, MAX(temp_c) AS chi, COUNT(*) AS n '
-                f'FROM weather WHERE t >= :s AND t < :e AND {TIP_OK} GROUP BY t0 ORDER BY t0',
+                f'FROM weather WHERE t >= :s AND t < :e AND {WEATHER_OK} GROUP BY t0 ORDER BY t0',
                 dict(s=start, e=end, b=bucket)).fetchall()
-            return dict(start=start, end=end, bucket=bucket, points=[dict(r) for r in rows], now=time.time())
+            return dict(start=start, end=end, bucket=bucket, points=[dict(r) for r in rows], now=time.time(),
+                        faults=[f for f in self.faults(start, 'baro') if f['start'] < end])
 
     def rain_total(self, start, end):
         """Tips in [start, end) with what qualifies the total: sensor restarts inside the period
@@ -312,6 +340,7 @@ class Store:
             excluded = [w for w in self.windows(start) if w['start'] < end]
             return dict(start=start, end=end, tips=tips, first_tip=first, last_tip=last,
                         restarts=restarts, gaps=gaps, rain_logging_since=since, maintenance=excluded,
+                        faults=[f for f in self.faults(start, 'rain') if f['start'] < end],
                         now=time.time())
 
     def rain(self, start, end):

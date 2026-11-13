@@ -1,3 +1,6 @@
+import io
+import sqlite3
+from contextlib import redirect_stdout
 import json
 import tempfile
 import threading
@@ -232,6 +235,54 @@ class WebTests(unittest.TestCase):
         self.assertEqual(total['tips'], 2)
         self.assertEqual(len(total['maintenance']), 1)
         self.assertEqual(self.store.rain_total(now + 75, now + 100)['maintenance'], [])
+
+    def test_faults_hide_one_sensor(self):
+        now = 1_800_000_000.0
+        self.w5(1, 0, received=now)
+        self.w5(2, 1, received=now + 10)
+        db = self.store.db
+        db.execute("INSERT INTO faults(sensor, start, end, note) VALUES('wind', ?, ?, 'wire off')", (now - 0.5, now + 5))
+        db.execute("INSERT INTO faults(sensor, start, end) VALUES('rain', ?, ?)", (now + 5, now + 15))
+        db.execute("INSERT INTO faults(sensor, start) VALUES('baro', ?)", (now + 20,))
+        db.execute('INSERT INTO weather VALUES(?, 101300, 20)', (now + 1,))
+        db.execute('INSERT INTO weather VALUES(?, 90000, 20)', (now + 30,))
+        # Wind: the revolution overlapping the fault is hidden, the later one is not.
+        shown = [p['t'] for p in self.store.query(start=now - 10, end=now + 100)['points']]
+        self.assertEqual(len(shown), len(db.execute('SELECT * FROM samples').fetchall()) - 1)
+        # Rain: the tip inside the rain fault is left out; maintenance is unaffected.
+        total = self.store.rain_total(now - 10, now + 100)
+        self.assertEqual((total['tips'], len(total['faults']), total['maintenance']), (0, 1, []))
+        # Barometer: the reading inside the open fault is left out.
+        wx = self.store.weather(now, now + 600, 600)
+        self.assertEqual((wx['points'][0]['n'], wx['points'][0]['p']), (1, 101300))
+        status = self.store.status()
+        self.assertEqual([f['sensor'] for f in status['faults_active']], ['baro'])
+        self.assertEqual(sorted(f['sensor'] for f in status['faults']), ['baro', 'rain', 'wind'])
+        with self.assertRaises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO faults(sensor, start) VALUES('radio', 1)")
+
+    def test_fault_cli(self):
+        import fault
+        now = time.time()
+        db = Path(self.temp.name) / 'history.db'
+        self.w5(1, 0, received=now - 600)
+        self.w5(2, 3, interval=32768, received=now - 300)
+        self.store.db.commit()
+        stamp = lambda t: time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(t))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            fault.main(['--db', str(db), 'add', 'rain', stamp(now - 400), stamp(now - 200), '--note', 'gauge stuck'])
+            fault.main(['--db', str(db), 'start', 'wind', '--note', 'wire off'])
+            with self.assertRaises(SystemExit):
+                fault.main(['--db', str(db), 'start', 'wind'])
+        self.assertIn('3 tips hidden', out.getvalue())
+        self.assertEqual(self.store.rain_total(now - 1000, now)['tips'], 0)
+        self.assertEqual([f['note'] for f in self.store.status()['faults_active']], ['wire off'])
+        with redirect_stdout(io.StringIO()):
+            fault.main(['--db', str(db), 'stop', 'wind'])
+            fault.main(['--db', str(db), 'remove', str(self.store.faults(sensor='rain')[0]['id'])])
+        self.assertEqual(self.store.status()['faults_active'], [])
+        self.assertEqual(self.store.rain_total(now - 1000, now)['tips'], 3)
 
     def test_link_statistics(self):
         now = time.time()

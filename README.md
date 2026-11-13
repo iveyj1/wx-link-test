@@ -39,6 +39,7 @@ Radio: 915 MHz, SF7, BW 500 kHz, CR 4/5, preamble 12, network 18, 2 dBm (configu
 | `monitor.py` | Packet decoder (W1–W5) and terminal monitor |
 | `web_server.py` | Serial reader, SQLite store, HTTP API, static dashboard |
 | `maint.py` | Maintenance windows and backed-up data purges (CLI) |
+| `fault.py` | Per-sensor fault periods: wind, rain or baro data marked wrong (CLI) |
 | `web/index.html`, `web/math.js` | Dashboard (no external JS/CSS) |
 | `deploy/anemometer-web.service` | systemd user unit for the dashboard |
 | `test_*.cpp`, `test_*.py`, `test_display.js` | Native, Python and JS tests |
@@ -82,6 +83,7 @@ Serves `http://<host>:8765/` on all interfaces, **without authentication or TLS*
 | `gaps` | Stretches of more than 1 h without packets | 400 days |
 | `weather` | Pressure (Pa) and enclosure temperature, at most one row per minute (W7) | 400 days |
 | `maintenance` | Maintenance windows (start, end or NULL while open, note) | kept |
+| `faults` | Sensor faults (sensor wind/rain/baro, start, end or NULL while open, note) | kept |
 | `state` | Latest decoded packet | — |
 
 API: `/api/live?after=<cursor>`, `/api/history?start=&end=` (≤ 12 h; with `&bucket=<s>&calm=20`, condensed, ≤ 12 days), `/api/rain?start=&end=` (≤ 32 days), `/api/weather?start=&end=` (≤ 32 days; per-bucket pressure and temperature mean/min/max, maintenance excluded), `/api/rain/total?start=&end=` (tip sum with restarts, gaps, maintenance windows and rain-logging start), `POST /api/maintenance` with JSON `{"action":"start"|"stop","note":…}` (JSON required, so another site can't trigger it). No `sqlite3` CLI is installed here; query with Python.
@@ -92,6 +94,7 @@ Handling can't be told apart from weather afterwards: lowering the mast spins th
 
 * **Before touching the sensor**, press **Start maintenance** on the dashboard (or `./maint.py start --note takedown`). Everything is still recorded, but wind samples whose revolution overlaps the window, and tips inside it, are left out of graphs, strip averages and every rain total. The live cards keep showing readings, so bench tests can be watched. The window is shaded on the charts. Press **End maintenance** once the sensor is back in service. Bench tests and reflashing belong inside a window too.
 * **Forgot?** Record it afterwards: `./maint.py add "2026-11-06 21:08" "21:30"` (or `open`). `list`, `end ID TIME` and `remove ID` adjust windows; removing one shows its data again. The takedown signature in `packets` is RSSI falling from its usual level (about −88 dBm at the mast) and then jumping to around −30 dBm indoors, plus a burst of rain tips.
+* **Sensor faults:** when one sensor gives wrong data while the others are fine (e.g. a disconnected anemometer wire reads as calm), mark it with `fault.py`: `./fault.py add wind "2026-11-12 20:06" "22:10:44" --note "wire off"`, or `start wind` / `stop wind` while it is happening; `list`, `end ID TIME` and `remove ID` as for maintenance. Sensors are `wind`, `rain` and `baro`. That sensor's data is left out of its graphs, averages and totals only; the dashboard shows a red banner and status while a fault is open and red shading afterwards. There is no dashboard button yet.
 * **Purge** only for data that should never count, such as a test against the wrong database: `./maint.py purge FROM TO` writes a consistent backup (SQLite backup API, which includes the WAL) to `data/backups/` first, then deletes `samples`, `packets` and `rain` rows in the range. Copying `wind.sqlite3` alone is not a backup while the service runs: recent writes are in `wind.sqlite3-wal`.
 * Outages need no action: gaps over 1 h are recorded, shown as no data, and flagged on rain totals. A new sensor boot starts a new session, so the cumulative tip count restarts cleanly.
 * Tape or wedge the rain bucket before moving the gauge.
