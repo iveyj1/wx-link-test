@@ -142,7 +142,7 @@ reset P0.18, VCC switch P0.13, crystals on P0.00/P0.01), but **its power section
 | nRF supply | AP2112K-3.3 LDO → VDD and VDDH tied (normal mode) | **High-voltage mode** (MAINREGSTATUS = 1): VDDH = 4.25 V on USB, VDD = 3.29 V from the nRF's own REG0 |
 | Battery sense | 806 k / 2 M divider to P0.04 | P0.04 floats: no divider. Read VDDH/5 internally instead |
 | VCC pin | P-FET from the 3.3 V LDO (600 mA), gate pulled low by 2 MΩ, so **on by default; P0.13 high turns it off** | The board has one 3.3 V LDO (the other regulator-like part is the charger). VCC held up under **at least 120 mA** in a user test, so it comes from that LDO, not REG0 |
-| Charger | LN2054 (TP4054-type), 10 k PROG ≈ 100 mA, no temperature input, orange LED on VBUS | Not checked. Assume the same class: no NTC input |
+| Charger | LN2054 (TP4054-type), 10 k PROG ≈ 100 mA, no temperature input, orange LED on VBUS | **Fuman (FM) LTH7R/4054** (LCSC C2913899): 4054-type CC/CV linear charger, SOT-23-5 (CHRG, GND, BAT, VCC, PROG); current set by the PROG resistor (I ≈ 1000 V / R_PROG). **No temperature input** |
 | Power path | VBUS through a Schottky diode, battery through a P-FET that turns off when VBUS is present | Not checked |
 | Header (USB left, CCW from bottom left) | | B−, 006, 005?, GND, GND, 017, 020, 022, 024, 100, 011, 104, 106 / 009, 010, 111, 113, 115, 002, 029, 031, VCC, RST, GND, RAW, B+. Also P1.01, P1.02, P1.07 on separate pads. **Pin 3 reads "005" here but P0.08 on the nice!nano; confirm before using it for UART RX** |
 | USB VBUS | Also wired to the nRF VBUS pin | Must be, because USB works. `USBREGSTATUS.VBUSDETECT` reads it with no GPIO |
