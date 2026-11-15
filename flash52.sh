@@ -8,6 +8,6 @@ export PATH="$HOME/.local/bin:$PATH"   # adafruit-nrfutil (pipx)
 zip=${1:-build/node52/node52.ino.zip}
 echo "waiting for the bootloader (double-tap RST to GND now)..."
 timeout 300 bash -c 'until ls /dev/serial/by-id/ 2>/dev/null | grep -qi nice_nano; do sleep 0.3; done'
-sleep 0.5
-adafruit-nrfutil dfu serial -pkg "$zip" -p "$(readlink -f /dev/serial/by-id/*nice_nano*)" -b 115200 --singlebank
+sleep 3   # let ModemManager finish probing the new port first
+timeout 60 adafruit-nrfutil dfu serial -pkg "$zip" -p "$(readlink -f /dev/serial/by-id/*nice_nano*)" -b 115200 --singlebank
 timeout 20 bash -c 'until ls /dev/serial/by-id/ 2>/dev/null | grep -qi nRF52840_node; do sleep 0.3; done' && echo "running: $(ls /dev/serial/by-id/ | grep -i nRF52840_node)"

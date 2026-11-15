@@ -8,6 +8,8 @@
 //   v0/v1  drive P0.13 (VCC switch on nice!nano-style boards) low/high, for a meter check
 //   dfu/uf2 reset into the bootloader (serial DFU only / UF2 drive + serial)
 //   all    i, c, a, u, p
+// On battery (no VBUS at boot) it runs the sleep-current test instead: 3 LED blinks, then System ON
+// sleep (RTC running, as in the real firmware) alternating 20 s with VCC on and 10 s with VCC off.
 #include <Adafruit_TinyUSB.h>
 #include <nrf_sdm.h>
 #include "Timebase52.h"
@@ -236,7 +238,23 @@ static void pulseTest() {
   Serial.println("expect: clean/bounce/5 ms -> pulses = closures; 15 ms dropout -> 2 pulses per closure");
 }
 
+// Battery sleep-current test. delay() is a FreeRTOS delay, so the core sleeps (tickless idle,
+// WFE) between ticks; with no VBUS the USB peripheral is off.
+static void sleepTest() {
+  pinMode(PIN_LED, OUTPUT);
+  for (int i = 0; i < 3; ++i) { digitalWrite(PIN_LED, HIGH); delay(150); digitalWrite(PIN_LED, LOW); delay(250); }
+  pinMode(PIN_VCC_SWITCH, OUTPUT);
+  tb::begin();
+  for (;;) {
+    digitalWrite(PIN_VCC_SWITCH, LOW);   // VCC on (P-FET gate low)
+    delay(20000);
+    digitalWrite(PIN_VCC_SWITCH, HIGH);  // VCC off
+    delay(10000);
+  }
+}
+
 void setup() {
+  if (!(NRF_POWER->USBREGSTATUS & POWER_USBREGSTATUS_VBUSDETECT_Msk)) sleepTest();
   cycBegin();
   pinMode(PIN_LED, OUTPUT);
   Serial.begin(115200);
