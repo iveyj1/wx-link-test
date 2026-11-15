@@ -132,16 +132,41 @@ The board's own USB VBUS is detected inside the nRF52840 (POWER USBDETECTED), bu
    condensation check, flagged in the payload so heated readings aren't used.
 6. **Conformal coat** the board as before. Keep the SHT31 sensing window and the BMP180 port clear.
 
+## Reference schematic vs. this board
+
+`nice-nano-schamatic.png` is the nice!nano v2 schematic. The Teyleten clone follows its pinout (header, LED P0.15,
+reset P0.18, VCC switch P0.13, crystals on P0.00/P0.01), but **its power section is different**, as the bring-up probe shows:
+
+| | nice!nano schematic | Teyleten (measured 2026-11-15) |
+|---|---|---|
+| nRF supply | AP2112K-3.3 LDO → VDD and VDDH tied (normal mode) | **High-voltage mode** (MAINREGSTATUS = 1): VDDH = 4.25 V on USB, VDD = 3.29 V from the nRF's own REG0 |
+| Battery sense | 806 k / 2 M divider to P0.04 | P0.04 floats: no divider. Read VDDH/5 internally instead |
+| VCC pin | P-FET from the 3.3 V LDO (600 mA), gate pulled low by 2 MΩ, so **on by default; P0.13 high turns it off** | Probably REG0 through the same P-FET. REG0 is rated 25 mA in total, **too little for the RYLR998 TX** |
+| Charger | LN2054 (TP4054-type), 10 k PROG ≈ 100 mA, no temperature input, orange LED on VBUS | Not checked. Assume the same class: no NTC input |
+| Power path | VBUS through a Schottky diode, battery through a P-FET that turns off when VBUS is present | Not checked |
+| USB VBUS | Also wired to the nRF VBUS pin | Must be, because USB works. `USBREGSTATUS.VBUSDETECT` reads it with no GPIO |
+
+Consequences:
+- **Power the RYLR998 (and preferably everything else) from its own regulator.** Use a low-Iq LDO from the battery,
+  e.g. 3.3 V with about 1 µA Iq, such as a TPS7A02 or an MCP1700 class part. Its enable or a load switch takes the
+  place of the board's VCC switch. Use the board's VCC only for small loads (AS5600 6.5 mA, BMP180, SHT31), and only after a
+  meter check of its sag under 20 mA.
+- **The battery reading is free.** VDDH/5 on the SAADC, so P0.31 needs no divider.
+- **The board charger can't do the cold-charge window**, so keep the external charger with a TS/TEMP input.
+- **VBUSDETECT reads the board's own VBUS.** If the charge switch sits between the panel and the board's USB, it reads
+  the switched side. P1.11 is still needed for "panel present" upstream of the switch.
+
 ## Power notes (to verify on the bench first)
 
 - **Standby current:** the manual quotes "~1 mA" standby with the LED off. The nRF itself idles at a few µA, so the rest
   is the board's regulator, charger and LED.
   - **Go/no-go:** measure the bare board on battery in System ON sleep before wiring anything. The Feather's W8 deep
   standby is the baseline to beat.
-- **VCC switch:** on nice!nano-style boards the VCC pin is switched by P0.13. Check this board's behaviour with a meter.
+- **VCC switch:** on nice!nano-style boards the VCC pin is switched by P0.13 through a P-FET. Per the schematic it is
+  on by default (2 MΩ gate pull-down) and P0.13 high turns it off. Check this board's behaviour with a meter.
   If it's switched, keep it on for the radio and BMP180 and use a separate load switch for the AS5600.
-- **Battery sense:** some clones divide the battery onto P0.04 internally; others have nothing. If this one has none,
-  use 2 × 1 MΩ to P0.31 with 100 nF across the lower resistor.
+- **Battery sense:** this board has no P0.04 divider, but it runs in high-voltage mode, so VDDH/5 reads the battery
+  internally. Confirm VDDH tracks the battery when running on battery alone.
 - **Crystal:** confirm a 32.768 kHz crystal is fitted. If not, the LFRC with calibration is adequate: the host
   timestamps packets, and ±250 ppm is irrelevant to revolution periods.
 - **Radio and UART current:** the firmware already sleeps the RYLR998 between sends (`AT+MODE=1`, 10 µA; RX 17.5 mA;
