@@ -141,18 +141,18 @@ reset P0.18, VCC switch P0.13, crystals on P0.00/P0.01), but **its power section
 |---|---|---|
 | nRF supply | AP2112K-3.3 LDO → VDD and VDDH tied (normal mode) | **High-voltage mode** (MAINREGSTATUS = 1): VDDH = 4.25 V on USB, VDD = 3.29 V from the nRF's own REG0 |
 | Battery sense | 806 k / 2 M divider to P0.04 | P0.04 floats: no divider. Read VDDH/5 internally instead |
-| VCC pin | P-FET from the 3.3 V LDO (600 mA), gate pulled low by 2 MΩ, so **on by default; P0.13 high turns it off** | Probably REG0 through the same P-FET. REG0 is rated 25 mA in total, **too little for the RYLR998 TX** |
+| VCC pin | P-FET from the 3.3 V LDO (600 mA), gate pulled low by 2 MΩ, so **on by default; P0.13 high turns it off** | The board has one 3.3 V LDO (the other regulator-like part is the charger). VCC held up under **at least 120 mA** in a user test, so it comes from that LDO, not REG0 |
 | Charger | LN2054 (TP4054-type), 10 k PROG ≈ 100 mA, no temperature input, orange LED on VBUS | Not checked. Assume the same class: no NTC input |
 | Power path | VBUS through a Schottky diode, battery through a P-FET that turns off when VBUS is present | Not checked |
+| Header (USB left, CCW from bottom left) | | B−, 006, 005?, GND, GND, 017, 020, 022, 024, 100, 011, 104, 106 / 009, 010, 111, 113, 115, 002, 029, 031, VCC, RST, GND, RAW, B+. Also P1.01, P1.02, P1.07 on separate pads. **Pin 3 reads "005" here but P0.08 on the nice!nano; confirm before using it for UART RX** |
 | USB VBUS | Also wired to the nRF VBUS pin | Must be, because USB works. `USBREGSTATUS.VBUSDETECT` reads it with no GPIO |
 
 Consequences:
-- **Power the RYLR998 (and preferably everything else) from its own regulator.** Use a low-Iq LDO from the battery,
-  e.g. 3.3 V with about 1 µA Iq, such as a TPS7A02 or an MCP1700 class part. Its enable or a load switch takes the
-  place of the board's VCC switch. Use the board's VCC only for small loads (AS5600 6.5 mA, BMP180, SHT31), and only after a
-  meter check of its sag under 20 mA.
+- **VCC is good for the RYLR998** (≥ 120 mA tested; the radio at +2 dBm needs far less). Still to check: whether
+  P0.13 switches it, and the LDO's quiescent current on battery (part of the sleep-current go/no-go).
 - **The battery reading is free.** VDDH/5 on the SAADC, so P0.31 needs no divider.
-- **The board charger can't do the cold-charge window**, so keep the external charger with a TS/TEMP input.
+- **No charging for now** (decision 2026-11-15). The board charger likely can't do a cold-charge window; revisit with an
+  external charger with a TS/TEMP input.
 - **VBUSDETECT reads the board's own VBUS.** If the charge switch sits between the panel and the board's USB, it reads
   the switched side. P1.11 is still needed for "panel present" upstream of the switch.
 
