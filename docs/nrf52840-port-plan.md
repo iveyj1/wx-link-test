@@ -55,6 +55,25 @@
   - For 3.3 V operation, VDD5V and VDD3V3 are tied together (most breakouts do this with a jumper or solder bridge).
   - Add 1 kΩ in series and 100 nF to GND at the ADC pin (τ = 0.1 ms) to filter pickup on the cable.
 
+### Vane power-up validation (bench, before relying on pulsed power)
+
+The datasheet gives T_PU = 10 ms and a 2.2 ms slow-filter settling time. It doesn't say how soon after power-up the
+analog OUT is accurate: the AGC, the DAC and any output glitch at power-on all matter. To measure:
+
+1. **Fix the vane** at about 8 angles around the circle, including both sides of the 0/360° wrap.
+2. **Reference:** with the AS5600 continuously powered, average many ADC readings at each angle.
+3. **Power-cycle repeatedly** (e.g. 200 times per angle, with varied off-times). Sample OUT at 2, 5, 8, 10, 12, 15, 20,
+   30 and 50 ms after switch-on, and also capture OUT on a scope during power-up.
+4. **Pass criterion:** the earliest time at which every sample is within ±1° (≈ 11 counts) of the reference, at every
+   angle.
+   - The firmware wait is then twice that.
+   - Check the I2C STATUS/AGC at the same moment, to see whether the AGC has settled.
+5. **Repeat cold** (freezer, about −15 °C) and at low battery voltage.
+6. **Firmware guard:** take two or three samples a millisecond or two apart at the end of the wait, accept only if they
+   agree, and flag a settle failure in `power_bits`.
+
+If pulsed readings fail, use LPM3 continuously (1.5 mA) or poll less often.
+
 ## Proposed pin assignments
 
 Orientation: component side up, USB at the top. The silkscreen numbers are the nRF port.pin (e.g. `022` = P0.22,
@@ -67,15 +86,16 @@ Orientation: component side up, USB at the top. The silkscreen numbers are the n
 | GND | Radio GND | | RST | Reset; double-tap to GND for the UF2 bootloader (bring out to a pad or button) |
 | GND | Sensor GND bus | | VCC | 3.3 V to peripherals (see the power notes) |
 | P0.17 | RYLR998 NRST (open-drain, active low) | | P0.31 / AIN7 | Battery divider, if the board has no battery sense |
-| P0.20 | Cold-charge inhibit (USB/solar input switch), if fitted | | P0.29 / AIN5 | **Vane: AS5600 OUT** (analog angle) |
-| P0.22 | **Wind reed** | | P0.02 / AIN0 | Spare analog (e.g. solar panel voltage) |
+| P0.20 | **Charge inhibit** (5 V panel → charger switch; the MCU can only inhibit) | | P0.29 / AIN5 | **Vane: AS5600 OUT** (analog angle) |
+| P0.22 | **Wind reed** | | P0.02 / AIN0 | **Battery NTC** (battery temperature) |
 | P0.24 | **Rain reed** | | P1.15 | **I2C SDA**: SHT31 (0x44) + BMP180 (0x77) |
-| P1.00 | **Vane power enable** (load switch) | | P1.13 | **I2C SCL** |
-| P0.11 | Spare | | P1.11 | Spare (e.g. SHT31 ALERT) |
-| P1.04 | Spare | | P0.10 | Avoid: NFC pin (usable only after a UICR change) |
-| P1.06 | Spare (status LED, external) | | P0.09 | Avoid: NFC pin |
+| P1.00 | **Vane 3.3 V switch** (load switch) | | P1.13 | **I2C SCL** |
+| P0.11 | **Battery heater enable** (logic-level N-FET; heater powered from the panel only) | | P1.11 | **Panel present** (5 V through a 100 k/200 k divider) |
+| P1.04 | **NTC excitation** (high only while reading, so the divider draws nothing between readings) | | P0.10 | Avoid: NFC pin (usable only after a UICR change) |
+| P1.06 | Spare (charger STAT input or status LED) | | P0.09 | Avoid: NFC pin |
 
-USB VBUS (USB or solar present) is detected inside the nRF52840 (POWER USBDETECTED/USBREMOVED), so it needs no pin.
+The board's own USB VBUS is detected inside the nRF52840 (POWER USBDETECTED), but the panel needs its own
+"present" input (P1.11), because the charge switch can disconnect it from the charger.
 
 ### Pin reasoning
 
@@ -85,8 +105,10 @@ USB VBUS (USB or solar present) is detected inside the nRF52840 (POWER USBDETECT
   - The assignment stays off the NFC pins (P0.09/P0.10) and the hard-to-solder bottom pads (P1.01, P1.02, P1.07).
   - It also avoids the internal pins: P0.13 (VCC switch on nice!nano-style boards), P0.15 (LED), P0.04 (battery sense
     on some boards) and P0.18 (reset).
-- **Analog:** only the three exposed AIN pins (P0.02, P0.29, P0.31) can read analog; all three are kept for battery,
-  vane OUT and a spare.
+- **Analog:** only the three exposed AIN pins (P0.02, P0.29, P0.31) can read analog: battery voltage, vane OUT and
+  battery temperature. That uses them all.
+  - Panel presence is therefore a digital input.
+  - If the board turns out to sense the battery internally on P0.04, P0.31 is freed for a panel-voltage divider.
 - **One I2C bus:** with the vane on an analog line, only the SHT31 and BMP180 (0x44 and 0x77, no clash) share the bus.
   The vane cable carries no I2C, so a fault on it can't hang the bus. A second TWIM stays available on the spare pins if
   ever needed.
@@ -128,21 +150,62 @@ USB VBUS (USB or solar present) is detected inside the nRF52840 (POWER USBDETECT
     restart it before the next command.
   - The radio's first command after sleep only wakes it, as now.
 
-## Charging, solar and USB
+## Power switching, charging and battery temperature
 
-- **Charging:** the board charges the LiPo from USB VBUS (5 V). A USB 5 V-output solar panel can feed the USB-C port.
-- **Cold charging:** a LiPo must not be charged below 0 °C, and this board's charger has no temperature input. In
-  winter the panel will try to charge a frozen cell. Options:
-  1. Put a load switch (P-FET) in the panel's 5 V line, driven from P0.20. The firmware opens it below about +2 °C,
-     using the SHT31 or BMP180 temperature, and closes it above about +5 °C. This is the minimal change.
-  2. Use an external solar charger with an NTC input (and ideally MPPT) instead of the on-board one.
-- **Sleep current with a charger fitted:** the charger chip's drain from the battery when VBUS is absent should be
-  small, but include it in the bare-board sleep measurement.
-- **USB detection:** VBUS from a solar panel isn't a USB host. Keep the Feather's rule:
-  - only an enumerated host (USB start-of-frame seen) switches to debug or "USB" behaviour;
-  - VBUS alone only means charging is possible, and is reported as a flag.
-- **Payload flags:** add `vbus` and `charge_inhibit`, so the dashboard can show charging state alongside battery
-  voltage.
+A USB 5 V solar panel feeds two loads: the charger and, when needed, a battery heater. Three switches, all
+default-off in hardware unless noted:
+
+| Switch | Rail | Part type | Control |
+|---|---|---|---|
+| Vane | 3.3 V, ≈ 6.5 mA | Load switch with slew control (e.g. TPS22917), so the 3.3 V rail doesn't dip | P1.00, on for ≈ 13 ms per reading |
+| Charge | Panel 5 V → charger | Load switch rated 5.5 V, or a P-FET with an N-FET level shifter | Hardware temperature window; P0.20 can only inhibit |
+| Heater | Panel 5 V → heater | Logic-level N-FET, low side (e.g. AO3400) | P0.11, firmware thermostat; never runs from the battery |
+
+### Cold-charge protection must not depend on the firmware
+
+- **Two failure modes:**
+  - If charging needs the MCU to turn it on, a flat battery can never recover: no battery, no MCU, no charging.
+  - If the MCU alone is responsible for stopping cold charging, a firmware fault can charge a frozen cell.
+- **Fix: enforce a 0–45 °C window in hardware,** and let the MCU only add inhibits on top (wired-AND).
+  - The simplest way is an external charger with an NTC input fed from the panel. For example, a TP4056 module with its
+    TEMP pin wired to a 10 k NTC network, or a BQ2407x/BQ25185-type charger with TS/JEITA. Its output goes to B+.
+  - The board's own charger is then used only on the bench with USB.
+- **Too hot as well:** the same window stops charging above 45 °C, which matters if the battery box sits in summer sun.
+
+### Battery heater (charge on cold, sunny days)
+
+- **Heater:** a resistor or polyimide film heater on the cell, about 1 W (25 Ω at 5 V), run only from the panel.
+- **Insulation does most of the work:** a small EPS box (about 10 × 8 × 5 cm, 2 cm walls) loses roughly 0.06 W/K.
+  - 1 W then holds the cell about 15 K above ambient.
+  - A 60 g cell warms 10 K in roughly 10–15 minutes.
+  - These are estimates. Measure the box's warm-up and cool-down on the bench.
+- **Firmware thermostat:** while the panel is present and battery temperature is below about +3 °C, heat. Stop at about
+  +8 °C. The hardware window lets charging start once the cell is above 0 °C.
+- **Panel budget:** the heater must not starve charging. With a 5–10 W panel, 1 W leaves most of the output for the
+  charger. On weak sun the panel voltage sags, which the panel-present input can catch.
+
+**Passive solar heating** (a dark, insulated battery box on the sunny face, perhaps glazed) couples nicely: it's warm
+exactly when the sun can charge. But it can't be switched off, so in summer the box must be shaded or vented, and the
+45 °C cutoff becomes essential. The heater and passive heating can be combined.
+
+### Battery temperature sensor
+
+- **Sensor:** a 10 kΩ NTC (B ≈ 3950) bead taped to the cell, inside the insulation.
+- **Divider:** with a 10 kΩ fixed resistor, read on P0.02/AIN0. The divider is powered from P1.04 only while reading,
+  so it draws no idle current. The ADC is referenced to VDD, so the reading is ratiometric.
+- **Second NTC:** the external charger's TEMP/TS network needs its own NTC on the same cell. Two beads keep the
+  charger's protection independent of the MCU.
+
+### USB detection
+
+- VBUS from a panel or a charger isn't a USB host. Keep the Feather's rule: only an enumerated host (USB start-of-frame
+  seen) switches to debug or "USB" behaviour.
+- Panel presence comes from P1.11, VBUS from the nRF.
+
+### Sleep current with all this fitted
+
+The charger, the switches and the divider must not leak from the battery when the panel is dark. Include them all in
+the sleep-current measurement before deployment.
 
 ## Bluetooth (later phase)
 
@@ -187,10 +250,12 @@ node52/   nRF52840 sensor: HAL for RTC2, GPIO SENSE, UARTE, TWIM0, SAADC, WDT, p
 
 - **Phase 1:** the node sends W8 unchanged (sleep = 1, clock = LFRC flag), so it can be run side by side with the Feather
   on the existing host.
-- **Phase 2: W9** = W8 + `rh_dpct` (0.1 %RH), `sht_temp_dk`, `vane_raw` (ADC counts, 0–fff), `fault_bits` (including
-  `vbus` and `charge_inhibit`).
-  - **Byte budget:** the W8 worst case is 223 of 240 bytes, and W9 adds ≈ 20, so it's tight.
-  - Cap `raw_edges`/`rain_raw_edges`, which are diagnostic, at 32 bits to restore margin.
+- **Phase 2: W9** = W8 + `rh_dpct` (0.1 %RH), `sht_temp_dk`, `vane_raw` (ADC counts, 0–fff), `batt_temp_dk`, and
+  `power_bits` (panel present, VBUS, charge inhibit, heater on, charger status, vane settle failure).
+  - **Byte budget:** the W8 worst case is 223 of 240 bytes, and W9 adds ≈ 24, so it doesn't fit as is.
+  - Options:
+    - Cap the diagnostic counters (`raw_edges`, `rain_raw_edges`) at 32 bits, which saves up to 16 bytes.
+    - Send the slow fields (humidity, the temperatures, battery, power bits) only every Nth packet and in heartbeats.
   - The receiver's 255-character line limit also needs checking.
 - **Wind direction:** the host computes the vector mean and the direction at the gust from per-report vane samples. Fixed
   vector math on the sensor isn't needed.
@@ -203,11 +268,15 @@ node52/   nRF52840 sensor: HAL for RTC2, GPIO SENSE, UARTE, TWIM0, SAADC, WDT, p
 3. **Reed inputs:** SENSE + debounce driving the shared counters; compare against a signal generator or a hand spin.
 4. **Radio:** UARTE, AT configuration, NRST recovery. Send W8 to the existing receiver and check against the Feather.
 5. **Sensors:** BMP180 port, then SHT31, then the vane (power-gated analog; set the magnet gap on the bench using I2C
-   STATUS/AGC).
+   STATUS/AGC). Then the **vane power-up validation** (see below).
 6. **Payload W9 and host:** `monitor.py`, `web_server.py`, dashboard humidity, dew point and wind direction (rose and
    time series), vane north offset, health flags.
 7. **Soak indoors** side by side with the Feather (drain, packet loss, counts), then outdoors, then retire the Feather.
-8. **Charging:** USB charging with the node in low-power operation, then the solar panel and the cold-charge inhibit.
+8. **Power:**
+   - USB charging with the node in low-power operation;
+   - then the external charger with its hardware temperature window;
+   - then the battery NTC and the heater, testing the box's warm-up in a freezer;
+   - then the solar panel outdoors.
 9. **Bluetooth:** configuration service, BTHome advertising, then BLE OTA DFU behind the physical maintenance gate.
 
 ## Decisions and open questions
@@ -218,7 +287,13 @@ node52/   nRF52840 sensor: HAL for RTC2, GPIO SENSE, UARTE, TWIM0, SAADC, WDT, p
   - Bluetooth eventually, for configuration, phone advertising and Android OTA DFU.
 - **Open:**
   - Enclosure and connector choice.
-  - Solar panel size and the cold-charge approach (load switch versus an external charger).
+  - Solar panel size.
+  - Heater, passive solar heating, or both.
+  - External charger part.
+- **Added 2026-11-15:**
+  - Power switches for the vane (3.3 V), charging (5 V) and a solar-powered battery heater.
+  - A temperature sensor on the battery.
+  - The vane's power-up reading must be validated.
 
 ## Reference datasheets (`docs/`)
 
