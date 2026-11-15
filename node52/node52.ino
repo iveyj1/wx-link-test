@@ -5,11 +5,14 @@
 //   a      ADC: VDD, VDDH/5, AIN0 (P0.02), AIN2 (P0.04), AIN5 (P0.29), AIN7 (P0.31)
 //   u      RYLR998 UART timing: 250 bytes via Serial1 (64-byte chunks) vs one DMA transfer
 //   p      reed-path loopback on P0.22: generated pulses, bounce and dropouts -> PulseCounter
-//   v0/v1  drive P0.13 (VCC switch on nice!nano-style boards) low/high, for a meter check
+//   v0/v1  drive P0.13 low/high: VCC off/on on this board (active-high enable, strong pull-up)
 //   dfu/uf2 reset into the bootloader (serial DFU only / UF2 drive + serial)
 //   all    i, c, a, u, p
 // On battery (no VBUS at boot) it runs the sleep-current test instead: 3 LED blinks, then System ON
-// sleep (RTC running, as in the real firmware) alternating 20 s with VCC on and 10 s with VCC off.
+// sleep (RTC running, as in the real firmware): 20 s P0.13 low (VCC off), 10 s P0.13 high (VCC on), twice;
+// then System OFF with VCC on (the nRF floor is ~0.4 uA; whatever remains is the board). Press RST to repeat.
+// Measured on this board: P0.13 is an active-high VCC enable with a strong pull-up (~5 k), so holding it
+// low costs ~640 uA. Leave it high (or an input) for VCC on.
 #include <Adafruit_TinyUSB.h>
 #include <nrf_sdm.h>
 #include "Timebase52.h"
@@ -245,12 +248,15 @@ static void sleepTest() {
   for (int i = 0; i < 3; ++i) { digitalWrite(PIN_LED, HIGH); delay(150); digitalWrite(PIN_LED, LOW); delay(250); }
   pinMode(PIN_VCC_SWITCH, OUTPUT);
   tb::begin();
-  for (;;) {
-    digitalWrite(PIN_VCC_SWITCH, LOW);   // VCC on (P-FET gate low)
+  for (int i = 0; i < 2; ++i) {
+    digitalWrite(PIN_VCC_SWITCH, LOW);   // VCC off (and ~640 uA into the pull-up)
     delay(20000);
-    digitalWrite(PIN_VCC_SWITCH, HIGH);  // VCC off
+    digitalWrite(PIN_VCC_SWITCH, HIGH);  // VCC on
     delay(10000);
   }
+  // System OFF: GPIO outputs (P0.13 high = VCC on, LED low) keep their state; only reset wakes it.
+  NRF_POWER->SYSTEMOFF = 1;
+  for (;;) __WFE();
 }
 
 void setup() {

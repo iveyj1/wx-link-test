@@ -26,7 +26,7 @@ extern "C" {
 #define LED_BLUE      PIN_LED1
 #define LED_RED       PIN_LED1
 #define LED_STATE_ON  1
-#define PIN_VCC_EN    (13)
+#define PIN_VCC_EN    (13)   // active high: VCC on; strong on-board pull-up, so driving it low costs ~640 uA
 
 // The exposed analog-capable pins.
 #define PIN_A0 (2)   // P0.02 / AIN0

@@ -162,8 +162,10 @@ Consequences:
   is the board's regulator, charger and LED.
   - **Go/no-go:** measure the bare board on battery in System ON sleep before wiring anything. The Feather's W8 deep
   standby is the baseline to beat.
-- **VCC switch:** on nice!nano-style boards the VCC pin is switched by P0.13 through a P-FET. Per the schematic it is
-  on by default (2 MΩ gate pull-down) and P0.13 high turns it off. Check this board's behaviour with a meter.
+- **VCC switch (measured 2026-11-15):** opposite to the nice!nano. On this board **P0.13 high = VCC on**, and
+  VCC is on by default through a strong pull-up of roughly 5 kΩ: holding P0.13 low (VCC off) costs about 640 µA.
+  Sleep with VCC on measured about 110 µA (System ON, RTC running, nothing attached); with P0.13 low, about 750 µA.
+  So VCC stays on permanently; switch the vane (and any other load to be cut) with its own load switch.
   If it's switched, keep it on for the radio and BMP180 and use a separate load switch for the AS5600.
 - **Battery sense:** this board has no P0.04 divider, but it runs in high-voltage mode, so VDDH/5 reads the battery
   internally. Confirm VDDH tracks the battery when running on battery alone.
