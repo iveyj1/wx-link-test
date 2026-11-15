@@ -1,0 +1,30 @@
+# Pro Micro nRF52840 (nice!nano v2 / SuperMini clone) on the Adafruit nRF52 core.
+# Arduino pin N = nRF GPIO N: P0.xx = xx, P1.xx = 32 + xx (e.g. P1.15 = 47).
+promicro.name=Pro Micro nRF52840 (wx, raw nRF pin numbers)
+promicro.vid.0=0x239A
+promicro.pid.0=0x00B3
+promicro.bootloader.tool=adafruit:bootburn
+promicro.upload.tool=adafruit:nrfutil
+promicro.upload.protocol=nrfutil
+promicro.upload.use_1200bps_touch=true
+promicro.upload.wait_for_upload_port=true
+promicro.upload.maximum_size=815104
+promicro.upload.maximum_data_size=237568
+promicro.build.mcu=cortex-m4
+promicro.build.f_cpu=64000000
+promicro.build.board=NRF52840_PROMICRO_WX
+promicro.build.core=adafruit:nRF5
+promicro.build.variant=promicro_nrf52840
+promicro.build.usb_manufacturer="wx-link"
+promicro.build.usb_product="nRF52840 node"
+promicro.build.extra_flags=-DNRF52840_XXAA {build.flags.usb}
+promicro.build.ldscript=nrf52840_s140_v6.ld
+promicro.build.vid=0x239A
+promicro.build.pid=0x80B3
+promicro.build.uf2_family=0xADA52840
+promicro.build.sd_name=s140
+promicro.build.sd_version=6.1.1
+promicro.build.sd_fwid=0x00B6
+promicro.build.debug_flags=-DCFG_DEBUG=0
+promicro.build.logger_flags=-DCFG_LOGGER=0
+promicro.build.sysview_flags=-DCFG_SYSVIEW=0

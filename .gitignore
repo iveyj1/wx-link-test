@@ -4,3 +4,4 @@ build/
 data/
 __pycache__/
 *.pyc
+hardware/wx/nrf52/libraries
