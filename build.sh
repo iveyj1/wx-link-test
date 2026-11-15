@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
+export PATH="$HOME/.local/bin:$PATH"   # adafruit-nrfutil (pipx), used to package nRF52 builds
 CLI=${ARDUINO_CLI:-/home/user/pnp/Arduino/arduino-cl/bin/arduino-cli}
 for role in sensor receiver; do
   flag=1; [[ $role == receiver ]] && flag=0

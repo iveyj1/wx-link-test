@@ -73,7 +73,7 @@ static double measureLf(uint32_t nTicks) {
   uint32_t c0 = NRF_RTC2->COUNTER, start = cyc();
   while (NRF_RTC2->COUNTER == c0) if (cyc() - start > 64000000u) return 0;
   uint32_t t0 = cyc(), r0 = NRF_RTC2->COUNTER;
-  while (((NRF_RTC2->COUNTER - r0) & 0xffffff) < nTicks) if (cyc() - t0 > 128000000u) return 0;
+  while (((NRF_RTC2->COUNTER - r0) & 0xffffff) < nTicks) if (cyc() - t0 > 4u * 64000000u) return 0;
   uint32_t dt = cyc() - t0;
   return double(nTicks) * 64e6 / double(dt);
 }
@@ -221,8 +221,10 @@ static void run(const char *name, int closures, uint32_t spacingMs, uint32_t low
   delay(50);  // let the last debounce settle
   Snap s1 = snap();
   const uint64_t expectPeriod = uint64_t(2) * spacingMs * tb::HZ / 1000;
-  Serial.printf("%-34s raw edges %4llu  pulses %3llu  revs %3llu  period %6llu (A %llu, B %llu) expect %llu\n", name,
-                s1.raw - s0.raw, s1.count - s0.count, s1.revs - s0.revs, s1.period, s1.a, s1.b, expectPeriod);
+  auto u = [](uint64_t v) { return (unsigned long)v; };
+  Serial.printf("%-34s raw edges %4lu  pulses %3lu  revs %3lu  period %6lu (A %lu, B %lu) expect %lu\n", name,
+                u(s1.raw - s0.raw), u(s1.count - s0.count), u(s1.revs - s0.revs), u(s1.period), u(s1.a), u(s1.b),
+                u(expectPeriod));
 }
 static void pulseTest() {
   Serial.println("== reed path loopback on P0.22 (SENSE -> PPI -> EGU3, 10 ms debounce on RTC2) ==");
