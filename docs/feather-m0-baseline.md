@@ -67,3 +67,26 @@ The sketch is `link/link.ino`. The portable logic is in `PulseCounter.h`, `TipCo
   - `maint.py`: maintenance windows.
   - `fault.py`: per-sensor faults.
   - `spindown.py`: bearing tests.
+
+## Rebuild (from 2026-11-16) and lessons learned
+
+The nRF52840 port is parked on branch `nrf52840-port` (the Pro Micro clone was hard to work with: a pulled-up VCC
+enable that costs ~640 µA to hold off, ~110 µA sleep floor with nothing attached, and a bootloader that ignores
+software DFU requests). Production may return to the nRF52840 on a custom board. Meanwhile the sensor is being
+rebuilt on a **new Feather M0** with the parts in hand, in a new enclosure. Fast (≤ 1 s) reports stay for development.
+
+Lessons to carry into the rebuild:
+- **Power (from the logged battery voltage, 1200 mAh LiPo):** calm with one report a minute ≈ 0.14 mV/h (≈ 0.2 mA);
+  windy with ~1 report a second ≈ 1.7 mV/h (≈ 2–3 mA); overall ≈ 4–5 weeks per charge. The send rate, not the sleep
+  floor, dominates. For production: send every ~10 s and carry the peak gust and shortest revolution in the payload.
+  Still to measure with a meter: the calm floor (battery lead) and the RYLR998 in `AT+MODE=1` (its VCC lead, ~10 µA expected).
+- **Reed wiring:** the Nov 12–13 chatter was the connections. Use soldered or crimped, strain-relieved joints and a
+  proper connector at the enclosure wall. Consider an RC filter at each reed input (e.g. 1 k series + 100 nF to GND
+  at the pin, ~0.1 ms) for ESD and noise; firmware debounce cannot reject dropouts ≥ 10 ms.
+- **Moisture:** conformal-coat the new board, especially the 32 kHz crystal and its caps (the old one failed over
+  overnight before coating).
+- **Bearings:** the 608CE pair is rough after reassembly; a new housing is planned. Re-run a spin-down after rebuild.
+- **New board identity:** the new Feather has a new USB serial number; update the sensor ID in the hardware notes.
+  The receiver (`monitor.py` RECEIVER) is unchanged.
+- **Before deploying:** bench soak with the raw edge counters at zero while wiggling the cables; measure the floor;
+  then close maintenance window 6 when it goes back outside.

@@ -1,5 +1,8 @@
 # Port plan: sensor node on the nRF52840 Pro Micro
 
+> **Parked 2026-11-16.** The bring-up code (board definition, probe, flash script) lives on branch
+> `nrf52840-port`. `main` is back on the Feather M0. Findings below are kept for a later custom nRF52840 board.
+
 **Target:** Teyleten Robot "Pro Micro nRF52840". It is a SuperMini / nice!nano v2-style clone (nRF52840, 1 MB flash,
 256 KB RAM, USB-C, LiPo charger, Adafruit UF2 bootloader; manual: `Teyleten-Robot-Pro-Micro-NRF52840.pdf`).
 
