@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Engineering Reference</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='4' width='20' height='24' rx='3' fill='none' stroke='%2370e8c2' stroke-width='3'/%3E%3Cpath d='M11 11h10M11 16h10M11 21h6' stroke='%2370e8c2' stroke-width='2.5'/%3E%3C/svg%3E">
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0c1520;color:#e6eef6;
+ --surface:#101e2b;--card:#142230;--border:#294053;--text:#e6eef6;--text2:#b7c6d3;--muted:#9cafbf;--accent:#70e8c2;--warn:#e8b45c;--code:#0b1622}
+*{box-sizing:border-box}body{margin:0;background:#0c1520}
+main{max-width:1200px;margin:auto;padding:24px 16px 80px}
+header{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap}
+h1{font-size:24px;margin:0}h2{font-size:19px;margin:0 0 10px;scroll-margin-top:12px}h3{font-size:15px;margin:20px 0 8px;color:var(--text)}
+.eyebrow{font-size:12px;letter-spacing:2px;color:#78a9c6;text-transform:uppercase}
+a{color:var(--accent)}p,li{color:var(--text2);line-height:1.55;max-width:84ch}
+ul{padding-left:20px}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.92em}
+code{background:var(--code);border:1px solid #1f3446;border-radius:4px;padding:0 4px;color:var(--text)}
+pre{background:var(--code);border:1px solid var(--border);border-radius:8px;padding:10px 14px;overflow-x:auto;color:var(--text);font-size:13px;line-height:1.5}
+section.block{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin:18px 0}
+nav.toc{display:flex;flex-wrap:wrap;gap:6px 14px;margin:18px 0 6px;font-size:14px}
+.table-wrap{overflow-x:auto;margin:6px 0}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:6px 9px;border-bottom:1px solid #1f3446;vertical-align:top}
+th{color:var(--muted);font-weight:500;white-space:nowrap}
+td{color:var(--text2)}td:first-child{color:var(--text);white-space:nowrap}
+.note{border-left:3px solid var(--warn);padding:6px 12px;background:#1a2230;border-radius:0 8px 8px 0;color:var(--text2);margin:10px 0;max-width:90ch}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.caption{font-size:12px;color:var(--muted)}
+.tag{font-size:11px;border:1px solid var(--border);border-radius:10px;padding:1px 7px;color:var(--muted);white-space:nowrap}
+svg{display:block;width:100%;height:auto}
+svg text{font-family:system-ui,sans-serif}
+.dg-box{fill:var(--card);stroke:#3a556c}
+.dg-hi{fill:#163329;stroke:var(--accent)}
+.dg-t{fill:var(--text);font-size:13px;font-weight:600}
+.dg-s{fill:var(--muted);font-size:11px}
+.dg-l{stroke:#5d7a91;stroke-width:1.6;fill:none}
+.dg-r{stroke:var(--accent);stroke-width:1.6;fill:none;stroke-dasharray:5 4}
+</style>
+</head>
+<body><main>
+<header><div><div class="eyebrow">Wind · rain · weather station</div><h1>Engineering reference</h1></div>
+<span style="display:flex;gap:14px"><a href="/spindown.html">Spin-down tests</a><a href="/">← Dashboard</a></span></header>
+
+<p>How the station is built and how it works, for the current firmware <b>W9-sht31</b> on the Feather M0 Adalogger
+sensor. The firmware source (<code>link/link.ino</code>) and the host code are authoritative where this page and they
+differ. The parked nRF52840 port is on git branch <code>nrf52840-port</code>.</p>
+
+<nav class="toc" aria-label="Contents">
+<a href="#system">System</a><a href="#pins">Sensor pinout</a><a href="#receiver">Receiver</a><a href="#radio">Radio link</a>
+<a href="#packet">Packet W9</a><a href="#timing">Timing and logic</a><a href="#host">Host processing</a>
+<a href="#mech">Rotor and calibration</a><a href="#power">Power</a><a href="#usb">USB commands</a><a href="#tools">Tools</a>
+<a href="#docs">Datasheets</a><a href="#history">Versions</a>
+</nav>
+
+<section class="block" id="system"><h2>System</h2>
+<svg viewBox="0 0 960 200" role="img" aria-label="Block diagram: reed switches, BMP180 and SHT31 feed the sensor Feather M0, which sends LoRa packets through an RYLR998 to a second RYLR998 and the receiver Feather M0, which passes them over USB to web_server.py, the SQLite database and the dashboard">
+ <rect class="dg-box" x="10" y="14" width="150" height="40" rx="8"/><text class="dg-t" x="22" y="32">Wind reed</text><text class="dg-s" x="22" y="47">2 closures / rev · D5</text>
+ <rect class="dg-box" x="10" y="62" width="150" height="40" rx="8"/><text class="dg-t" x="22" y="80">Rain reed</text><text class="dg-s" x="22" y="95">1 closure / tip · D10</text>
+ <rect class="dg-box" x="10" y="110" width="150" height="40" rx="8"/><text class="dg-t" x="22" y="128">BMP180 · SHT31</text><text class="dg-s" x="22" y="143">I2C 0x77 · 0x44</text>
+ <rect class="dg-box" x="10" y="158" width="150" height="34" rx="8"/><text class="dg-t" x="22" y="180">LiPo 1200 mAh</text>
+ <path class="dg-l" d="M160 34H200M160 82H200M160 130H200M160 175H200"/>
+ <rect class="dg-hi" x="200" y="14" width="170" height="178" rx="10"/><text class="dg-t" x="214" y="38">Sensor Feather M0</text><text class="dg-s" x="214" y="56">Adalogger · SAMD21G18</text>
+ <text class="dg-s" x="214" y="80">32768 Hz RTC timebase</text><text class="dg-s" x="214" y="96">10 ms debounce</text><text class="dg-s" x="214" y="112">deep standby on battery</text><text class="dg-s" x="214" y="128">report ≤ 1/s, heartbeat 60 s</text>
+ <path class="dg-l" d="M370 103H400"/>
+ <rect class="dg-box" x="400" y="78" width="110" height="50" rx="8"/><text class="dg-t" x="412" y="99">RYLR998</text><text class="dg-s" x="412" y="115">addr 1 · UART</text>
+ <path class="dg-r" d="M510 103H580"/><text class="dg-s" x="545" y="94" text-anchor="middle">LoRa</text><text class="dg-s" x="545" y="122" text-anchor="middle">915 MHz</text>
+ <rect class="dg-box" x="580" y="78" width="110" height="50" rx="8"/><text class="dg-t" x="592" y="99">RYLR998</text><text class="dg-s" x="592" y="115">addr 2</text>
+ <path class="dg-l" d="M690 103H720"/>
+ <rect class="dg-box" x="720" y="14" width="230" height="56" rx="8"/><text class="dg-t" x="732" y="36">Receiver Feather M0</text><text class="dg-s" x="732" y="54">same sketch, SENSOR=0 · USB +RCV lines</text>
+ <path class="dg-l" d="M835 70V86"/>
+ <rect class="dg-box" x="720" y="86" width="230" height="50" rx="8"/><text class="dg-t" x="732" y="107">web_server.py</text><text class="dg-s" x="732" y="124">decode · store · HTTP :8765</text>
+ <path class="dg-l" d="M835 136V152"/>
+ <rect class="dg-box" x="720" y="152" width="230" height="40" rx="8"/><text class="dg-t" x="732" y="177">SQLite · dashboard</text>
+</svg>
+<p class="caption">Each packet is self-contained and cumulative (counts since boot), so a lost packet loses time
+resolution, never revolutions or tips.</p>
+</section>
+
+<section class="block" id="pins"><h2>Sensor pinout: Feather M0 Adalogger</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Feather pin</th><th>SAMD21</th><th>Connects to</th><th>Details</th></tr></thead>
+<tbody>
+<tr><td>D5</td><td>PA15 · EXTINT15</td><td>Wind reed → GND</td><td>Internal pull-up, active low. Wakes from standby.</td></tr>
+<tr><td>D10</td><td>PA18 · EXTINT2</td><td>Rain reed → GND</td><td>Internal pull-up; about 100 ms closure per tip. Wakes from standby.</td></tr>
+<tr><td>D1 (TX)</td><td>PA10 · SERCOM0</td><td>RYLR998 RXD</td><td>Serial1, 115200 baud, 8N1. TX by DMA (no idle gaps).</td></tr>
+<tr><td>D0 (RX)</td><td>PA11 · SERCOM0</td><td>RYLR998 TXD</td><td></td></tr>
+<tr><td>D6</td><td>PA20</td><td>RYLR998 NRST</td><td>Active low, driven high. Pulsed after 3 consecutive send failures.</td></tr>
+<tr><td>SDA / SCL</td><td>PA22 / PA23</td><td>BMP180 (0x77), SHT31 (0x44 or 0x45)</td><td>100 kHz. Breakout boards carry the pull-ups.</td></tr>
+<tr><td>3V</td><td></td><td>RYLR998 VCC, BMP180, SHT31</td><td>On-board AP2112K-3.3 regulator.</td></tr>
+<tr><td>BAT / JST</td><td></td><td>LiPo, 1200 mAh</td><td>Charged from USB by the on-board MCP73831.</td></tr>
+<tr><td>A7 = D9</td><td>PA07</td><td>On-board battery divider (1:2)</td><td>8 × 12-bit reads, averaged. Don't use D9 for anything else.</td></tr>
+</tbody></table></div>
+<h3>Keep free</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Pin</th><th>Why</th></tr></thead><tbody>
+<tr><td>A0</td><td>Read floating at boot as entropy for the session ID.</td></tr>
+<tr><td>D4, D7, D8</td><td>Adalogger SD card select (held high), card detect, green SD LED (held off).</td></tr>
+<tr><td>SCK / MOSI / MISO</td><td>SD card SPI.</td></tr>
+<tr><td>D13</td><td>Red LED: 5 ms flash after each successful send.</td></tr>
+</tbody></table></div>
+<h3>Planned (not in firmware yet)</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Pin</th><th>Use</th></tr></thead><tbody>
+<tr><td>A1 (PB08)</td><td>AS5600 OUT: wind vane angle, analog, ratiometric to 3.3 V.</td></tr>
+<tr><td>D11 (PA16)</td><td>Vane power enable through a load switch or P-FET (the AS5600 draws about 6.5 mA).</td></tr>
+<tr><td>D12, A2–A5</td><td>Spare.</td></tr>
+</tbody></table></div>
+<div class="note">Reed inputs: use an RC filter at the pin, 1 kΩ in series and 100 nF to GND (τ ≈ 0.1 ms), for ESD and
+noise. It doesn't affect the 10 ms debounce. Firmware cannot reject dropouts of 10 ms or more (Nov 13 chatter), so the
+wiring must be solid: crimped or soldered, strain-relieved, with a proper connector at the enclosure wall.</div>
+</section>
+
+<section class="block" id="receiver"><h2>Receiver</h2>
+<p>A second Feather M0 with an RYLR998 on the host's USB, running the same sketch built with <code>SENSOR=0</code>
+(radio address 2, no sensors). It prints each received frame on USB as
+<code>+RCV=&lt;from&gt;,&lt;length&gt;,&lt;payload&gt;,&lt;RSSI dBm&gt;,&lt;SNR dB&gt;</code>, which <code>web_server.py</code>
+reads from <code>/dev/serial/by-id/usb-Adafruit_Feather_M0_B55AB548…-if00</code> (set in <code>monitor.py</code>).
+Frames from any address other than 1 are rejected.</p>
+</section>
+
+<section class="block" id="radio"><h2>Radio link</h2>
+<div class="grid2">
+<div class="table-wrap"><table>
+<thead><tr><th>Setting</th><th>Command</th><th>Value</th></tr></thead><tbody>
+<tr><td>Mode</td><td><code>AT+MODE=0</code></td><td>Transceiver; <code>AT+MODE=1</code> = sleep (~10 µA)</td></tr>
+<tr><td>Address</td><td><code>AT+ADDRESS</code></td><td>Sensor 1, receiver 2</td></tr>
+<tr><td>Network</td><td><code>AT+NETWORKID=18</code></td><td></td></tr>
+<tr><td>Band</td><td><code>AT+BAND=915000000</code></td><td>915 MHz</td></tr>
+<tr><td>Modulation</td><td><code>AT+PARAMETER=7,9,1,12</code></td><td>SF7, BW 500 kHz, CR 4/5, preamble 12</td></tr>
+<tr><td>TX power</td><td><code>AT+CRFOP=2</code></td><td>+2 dBm</td></tr>
+<tr><td>UART</td><td><code>AT+IPR=115200</code></td><td>115200 baud</td></tr>
+</tbody></table></div>
+<div>
+<h3 style="margin-top:0">Send sequence</h3>
+<ol>
+<li>Wake: the first UART byte wakes the module from <code>MODE=1</code> (the firmware never queries MODE while asleep).</li>
+<li><code>AT+SEND=2,&lt;len&gt;,&lt;payload&gt;</code>, as one DMA transfer. The module splits a command at any idle gap of about one character, so byte-by-byte sends can break it.</li>
+<li>Wait up to 2.5 s for <code>+OK</code>, which means the frame has been transmitted.</li>
+<li><code>AT+MODE=1</code> puts it back to sleep.</li>
+</ol>
+<p>Every setting is read back and checked after configuration. After 3 consecutive failures, and every 3rd one after that, NRST is pulsed and the
+module reconfigured.</p>
+</div></div>
+<p class="caption">Measured outdoors (sensor mounted, Nov 9–13): RSSI ≈ −93 dBm, SNR +5…+10 dB, packet loss 0.18%. Limits: payload ≤ 240 bytes
+(module); receiver line ≤ 255 characters.</p>
+</section>
+
+<section class="block" id="packet"><h2>Packet W9</h2>
+<p>Comma-separated ASCII. All numbers are <b>lowercase hex</b> without leading zeros, except the session (8 digits). Times are
+in RTC ticks of 1/32768 s. "All f" (<code>ffffffffffffffff</code>) means never/unknown.</p>
+<pre>W9,3f2a91c0,1b7,4d,8a12,8b40,2c1,2c1,3a2f19,1,1c,52,0,0,0,ffffffffffffffff,1,0,1036,18bcd,b7b,1,b9a,1f4</pre>
+<div class="table-wrap"><table>
+<thead><tr><th>#</th><th>Field</th><th>Encoding</th><th>Meaning</th></tr></thead><tbody>
+<tr><td>0</td><td>version</td><td><code>W9</code></td><td>Payload layout version (see <a href="#history">Versions</a>).</td></tr>
+<tr><td>1</td><td>session</td><td>8 hex</td><td>Random per boot. A new session tells the host the counters restarted.</td></tr>
+<tr><td>2</td><td>seq</td><td>hex</td><td>Increments per report; gaps reveal lost packets.</td></tr>
+<tr><td>3</td><td>count</td><td>hex u64</td><td>Debounced wind reed closures since boot.</td></tr>
+<tr><td>4</td><td>A</td><td>hex ≤ ffffffff</td><td>Ticks from closure 2k−1 to 2k of the last completed revolution (first half).</td></tr>
+<tr><td>5</td><td>B</td><td>hex ≤ ffffffff</td><td>Ticks from closure 2k to 2k+1 (second half). Period = A + B.</td></tr>
+<tr><td>6</td><td>age</td><td>hex u64</td><td>Ticks since the last closure.</td></tr>
+<tr><td>7</td><td>rev_age</td><td>hex u64</td><td>Ticks since the last completed revolution.</td></tr>
+<tr><td>8</td><td>uptime</td><td>hex u64</td><td>Ticks since boot (time of this snapshot).</td></tr>
+<tr><td>9</td><td>pin</td><td>0/1</td><td>Wind reed level now; 1 = open.</td></tr>
+<tr><td>10</td><td>pin_age</td><td>hex u64</td><td>Ticks since the last raw wind edge.</td></tr>
+<tr><td>11</td><td>raw_edges</td><td>hex u64</td><td>Wind edges before debounce. Clean = 2 per closure; more = bounce or chatter.</td></tr>
+<tr><td>12</td><td>clock</td><td>0/1</td><td>0 = 32 kHz crystal, 1 = internal fallback oscillator.</td></tr>
+<tr><td>13</td><td>rain_tips</td><td>hex u64</td><td>Debounced rain closures (tips) since boot.</td></tr>
+<tr><td>14</td><td>rain_interval</td><td>hex ≤ ffffffff</td><td>Ticks between the last two tips; 0 = fewer than two.</td></tr>
+<tr><td>15</td><td>rain_age</td><td>hex u64</td><td>Ticks since the last tip.</td></tr>
+<tr><td>16</td><td>rain_pin</td><td>0/1</td><td>Rain reed level now; 1 = open.</td></tr>
+<tr><td>17</td><td>rain_raw_edges</td><td>hex u64</td><td>Rain edges before debounce.</td></tr>
+<tr><td>18</td><td>vbat_mv</td><td>hex</td><td>Battery, mV. On USB the charger holds it near 4.2 V.</td></tr>
+<tr><td>19</td><td>pressure_pa</td><td>hex ≤ 5 digits</td><td>BMP180 station pressure, Pa. 0 = no fresh reading.</td></tr>
+<tr><td>20</td><td>temp_dk</td><td>hex ≤ 3 digits</td><td>BMP180 (enclosure) temperature, 0.1 K = °C × 10 + 2732. 0 = none.</td></tr>
+<tr><td>21</td><td>sleep</td><td>0/1</td><td>0 = light sleep (USB host seen), 1 = deep standby.</td></tr>
+<tr><td>22</td><td>air_dk</td><td>hex ≤ 3 digits</td><td>SHT31 air temperature, 0.1 K. 0 = none.</td></tr>
+<tr><td>23</td><td>rh_pm</td><td>hex ≤ 3 digits</td><td>SHT31 relative humidity, 0.1 % (0–1000). 0 with air_dk 0 = none.</td></tr>
+</tbody></table></div>
+<p>Derived by the host: revolutions = (count − 1) ÷ 2 (the first closure is the reference), period = A + B, rotor
+frequency = 32768 ÷ period Hz. Worst-case length is 231 bytes (all u64 fields at 16 digits, caps applied).</p>
+<p>The host rejects a frame on any inconsistency: wrong field count, period without revolutions, raw edges fewer than
+closures, out-of-range sensor values, pressure without temperature, or humidity without temperature.</p>
+</section>
+
+<section class="block" id="timing"><h2>Timing and logic</h2>
+<h3>Timebase</h3>
+<ul>
+<li>RTC from the 32.768 kHz crystal (XOSC32K on GCLK2): 32768 ticks/s, extended to 64 bits. Every time in the packet uses it.</li>
+<li><b>Crystal failover:</b> if the RTC stays quiet for 8 s (it normally fires at least every 5 s), the RTC and the reed interrupt
+controller switch to the internal OSC32K (GCLK5) and <code>clock</code> becomes 1. The crystal is retried every 10 min.
+Condensation stopped it on Nov 3–5, before the board was conformal-coated.</li>
+</ul>
+<h3>Reed debounce (wind and rain)</h3>
+<ul>
+<li>Every edge interrupts, is counted in <code>raw_edges</code>, and restarts a 328-tick (10.01 ms) timer on the RTC compare.</li>
+<li>A level change counts only if the pin holds it for the whole 10 ms. Bounce shorter than that is ignored.</li>
+<li>Wind counts closures (falling edges); revolutions complete on closures 3, 5, 7…, with A and B the two half-periods. Two magnets or
+two closures per turn need not be evenly spaced, because A + B is always a full turn.</li>
+<li>Rain counts one tip per debounced closure; the reopening isn't counted. A gauge resting closed at boot counts its next closure.</li>
+<li>Limit: an open-circuit dropout of 10 ms or more inside a closure counts as an extra closure.</li>
+</ul>
+<h3>Reporting</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Rule</th><th>Value</th></tr></thead><tbody>
+<tr><td>Trigger</td><td>A completed revolution or a rain tip since the last successful report.</td></tr>
+<tr><td>Minimum spacing</td><td>1 s after the previous report <i>finished</i> (slow radio operations can't cause bursts).</td></tr>
+<tr><td>Heartbeat</td><td>60 s after the last success when nothing changed.</td></tr>
+<tr><td>After a failure</td><td>Retry no sooner than 5 s; NRST pulse after 3 consecutive failures.</td></tr>
+<tr><td>Typical rates</td><td>Calm: 60 packets/h. Steady wind: ~1 per second (about 1300/h measured).</td></tr>
+</tbody></table></div>
+<h3>Environmental sensors (inside a report)</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Sensor</th><th>Read</th><th>Cost</th><th>Stale → 0</th><th>Re-probe</th></tr></thead><tbody>
+<tr><td>BMP180</td><td>every 30 s, OSS 3 (ultra high resolution)</td><td>~31 ms delay</td><td>5 min</td><td>10 min</td></tr>
+<tr><td>SHT31</td><td>every 30 s, single shot, high repeatability, CRC-8 checked</td><td>~16 ms delay</td><td>5 min</td><td>10 min</td></tr>
+<tr><td>Battery</td><td>every report, 8 × 12-bit ADC</td><td>&lt; 1 ms</td><td>—</td><td>—</td></tr>
+</tbody></table></div>
+<p>Counting carries on in interrupts during the delays. A watchdog reset that happens during any I2C access is taken as a stuck bus: both I2C
+sensors stay off until the next boot, and they report 0.</p>
+<h3>Power modes and watchdog</h3>
+<ul>
+<li><b>Deep standby</b> (battery): CPU, 48 MHz clock and SysTick stop; the RTC, reed interrupts and watchdog run and wake it.</li>
+<li><b>Light sleep</b>: used for the whole session if a USB host is seen within 10 s of boot. USB keeps working. To measure battery
+behaviour, unplug USB and <b>then</b> reset.</li>
+<li><b>Watchdog</b>: 16 s timeout from the ultra-low-power 32 kHz oscillator, with an early-warning interrupt at 8 s. The early warning also
+detects a dead crystal in deep standby. A stage trace in retained RAM survives a watchdog reset and is reported at the next boot.</li>
+</ul>
+</section>
+
+<section class="block" id="host"><h2>Host processing</h2>
+<ul>
+<li><b>Wind:</b> each new revolution becomes a sample (frequency, A/B imbalance). Calm is deduced from <code>rev_age</code>. Speed =
+frequency × calibration (set on the dashboard; currently 6.5 kn per rev/s).</li>
+<li><b>Rain:</b> tips added since the previous packet in the same session are stored with their time. A new session counts all its
+tips as new. Rain per tip: 0.369 mm (2 ml over a 49.5 × 109.5 mm funnel).</li>
+<li><b>Pressure and temperature:</b> one row per minute (BMP180 in the <code>weather</code> table, SHT31 in <code>climate</code>).</li>
+<li><b>Gaps:</b> no packet for 1 h is recorded as a data gap.</li>
+<li><b>Maintenance windows</b> (<code>maint.py</code> or the dashboard button) keep the data but hide it from graphs and totals.
+<b>Sensor faults</b> (<code>fault.py</code>; sensors <code>wind</code>, <code>rain</code>, <code>baro</code>, <code>air</code>) hide one
+sensor's readings only.</li>
+</ul>
+<div class="table-wrap"><table>
+<thead><tr><th>Table</th><th>Content</th><th>Kept</th></tr></thead><tbody>
+<tr><td>packets</td><td>Every decoded packet (RSSI, SNR, counters, battery, sensors)</td><td>7 days</td></tr>
+<tr><td>samples</td><td>One row per wind revolution measurement</td><td>7 days</td></tr>
+<tr><td>rain</td><td>Tips with time and interval</td><td>400 days</td></tr>
+<tr><td>weather · climate</td><td>Pressure and enclosure temperature · air temperature and humidity, 1 row/min</td><td>400 days</td></tr>
+<tr><td>runs · gaps</td><td>Sensor sessions · reception gaps</td><td>400 days</td></tr>
+<tr><td>maintenance · faults</td><td>Windows</td><td>kept</td></tr>
+</tbody></table></div>
+<p class="caption">Database: <code>data/wind.sqlite3</code>. Service: systemd user unit <code>anemometer-web</code>, port 8765.</p>
+</section>
+
+<section class="block" id="mech"><h2>Rotor and calibration</h2>
+<ul>
+<li>3 cups, radius ≈ 185 mm from the axis to cup centre; 2 reed closures per revolution.</li>
+<li>Bearings: 608CE ceramic, dry, open, PTFE cage. A rough pair after reassembly; a new housing is planned.</li>
+<li><b>Spin-down model</b>: df/dt = −a − b·f². Here a is bearing friction (rev/s²) and b is cup drag (1/rev). The starting speed scales with √(a/b).
+Results are on the <a href="/spindown.html">spin-down page</a>.</li>
+</ul>
+<div class="grid2">
+<div class="table-wrap"><table>
+<thead><tr><th>Bearing set</th><th>a, rev/s²</th></tr></thead><tbody>
+<tr><td>608ZZ steel, shields + grease (Uxcell)</td><td>0.0089</td></tr>
+<tr><td>608CE ceramic, bench</td><td>0.0032</td></tr>
+<tr><td>608 steel, no-name, dry, open</td><td>0.0091</td></tr>
+<tr><td>608CE as mounted</td><td>0.0084</td></tr>
+<tr><td>608CE as mounted, arms rebalanced</td><td>0.0056</td></tr>
+</tbody></table></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Handheld (HP-866B)</th><th>Rotor</th></tr></thead><tbody>
+<tr><td>2 kt</td><td>0.21–0.22 rev/s (×3)</td></tr>
+<tr><td>4 kt</td><td>0.43 rev/s (×2)</td></tr>
+<tr><td>6 kt</td><td>0.93 rev/s (1 run, uncertain)</td></tr>
+<tr><td>Fit, 2–4 kt</td><td>kt ≈ 0.14 + 8.9 × rev/s</td></tr>
+</tbody></table></div>
+</div>
+<p class="caption">The dashboard uses 6.5 kn per rev/s until a better calibration is made (planned: a steady SW wind with the handheld beside the sensor).</p>
+</section>
+
+<section class="block" id="power"><h2>Power</h2>
+<p>From the logged battery voltage, on a 1200 mAh LiPo near 4.1 V (about 1.2–1.8 mAh per mV, so treat currents as ±50%):</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Condition</th><th>Packets/h</th><th>Slope</th><th>≈ Current</th></tr></thead><tbody>
+<tr><td>Calm, indoors, 21 °C (Nov 14)</td><td>60</td><td>0.14 mV/h</td><td>~0.2 mA</td></tr>
+<tr><td>Windy, ~3 °C (Nov 12–13)</td><td>~1300</td><td>1.7 mV/h</td><td>~2–3 mA</td></tr>
+<tr><td>Mixed, Nov 9–13</td><td>—</td><td>1.25 mV/h</td><td>~1.5–2 mA, 4–5 weeks per charge</td></tr>
+</tbody></table></div>
+<h3>Expected sleep floor</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Part</th><th>Current</th></tr></thead><tbody>
+<tr><td>AP2112K regulator, own draw</td><td>~55 µA</td></tr>
+<tr><td>Battery divider (2 × 100 kΩ)</td><td>~20 µA</td></tr>
+<tr><td>SAMD21 standby, RTC running</td><td>~5 µA</td></tr>
+<tr><td>RYLR998 in <code>MODE=1</code></td><td>~10 µA</td></tr>
+<tr><td>BMP180 + SHT31 idle</td><td>~5 µA</td></tr>
+<tr><td><b>Total</b></td><td><b>~95 µA</b></td></tr>
+</tbody></table></div>
+<p>Sending once a second in wind dominates. For production: send every ~10 s and carry the peak gust and shortest revolution in the payload.
+Still to measure with a meter: the calm floor (battery lead) and the RYLR998 alone (its VCC lead).</p>
+</section>
+
+<section class="block" id="usb"><h2>USB commands (sensor and receiver)</h2>
+<p>One per line at 115200 baud. Wait 7 s or more after opening the port before sending <code>!status</code>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Command</th><th>Effect</th></tr></thead><tbody>
+<tr><td><code>!status</code></td><td>Counters, clock, radio, battery, BMP180, SHT31, firmware, reset cause, standby statistics.</td></tr>
+<tr><td><code>!report</code></td><td>Sensor: send a report now.</td></tr>
+<tr><td><code>!i2c-scan</code></td><td>Sensor: list I2C addresses that answer.</td></tr>
+<tr><td><code>!standby-test</code></td><td>Sensor: say whether deep standby is active.</td></tr>
+<tr><td><code>!uart-test</code></td><td>Sensor: simulate a missing TX-complete on the next send.</td></tr>
+<tr><td><code>!xosc-test</code> / <code>!xosc-test deep</code></td><td>Stop the crystal for 90 s to exercise failover (expect it within ~8 s). <i>deep</i> also forces deep standby and detaches USB until the crystal is restored (up to ~11 min).</td></tr>
+<tr><td><code>!clock-retry</code></td><td>Try the crystal again now.</td></tr>
+<tr><td><code>!diag-reset</code></td><td>Deliberate reset that tests the retained stage trace (shown by <code>!status</code> after the reboot).</td></tr>
+<tr><td><code>!led on</code> / <code>!led off</code></td><td>Red LED.</td></tr>
+</tbody></table></div>
+</section>
+
+<section class="block" id="tools"><h2>Tools</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>./build.sh</code></td><td>Build sensor and receiver firmware, run all native and Python tests, check the retained-RAM layout.</td></tr>
+<tr><td><code>python3 maint.py list | start | stop | add | end | remove | purge</code></td><td>Maintenance windows and data trimming.</td></tr>
+<tr><td><code>python3 fault.py list | start | stop | add …</code></td><td>Per-sensor faults.</td></tr>
+<tr><td><code>python3 monitor.py</code></td><td>Decode the receiver's output in a terminal (stop the service first).</td></tr>
+<tr><td><code>spindown_sets.json</code> + <a href="/spindown.html">spin-down page</a></td><td>Bearing tests.</td></tr>
+<tr><td><code>git checkout feather-m0-w8</code></td><td>Previous deployed firmware (W8).</td></tr>
+</tbody></table></div>
+</section>
+
+<section class="block" id="docs"><h2>Datasheets and notes</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Part</th><th>Document</th></tr></thead><tbody>
+<tr><td>RYLR998 LoRa module</td><td><a href="/docs/RYLR998.pdf">RYLR998.pdf</a> <span class="tag">Reyax</span></td></tr>
+<tr><td>BMP180 barometer</td><td><a href="/docs/BMP180.pdf">BMP180.pdf</a> <span class="tag">Bosch</span></td></tr>
+<tr><td>SHT31 temperature/humidity</td><td><a href="/docs/Datasheet_SHT3x_DIS.pdf">Datasheet_SHT3x_DIS.pdf</a> <span class="tag">Sensirion</span></td></tr>
+<tr><td>AS5600 vane sensor</td><td><a href="/docs/AMS_AS5600_Datasheet_EN.pdf">AMS_AS5600_Datasheet_EN.pdf</a> <span class="tag">ams</span></td></tr>
+<tr><td>Feather M0 Adalogger</td><td><a href="https://learn.adafruit.com/adafruit-feather-m0-adalogger" rel="noopener">Adafruit guide (pinouts, schematic)</a> <span class="tag">external</span></td></tr>
+<tr><td>SAMD21G18</td><td><a href="https://www.microchip.com/en-us/product/ATSAMD21G18" rel="noopener">Microchip product page and datasheet</a> <span class="tag">external</span></td></tr>
+<tr><td>Feather M0 baseline</td><td><a href="/docs/feather-m0-baseline.md">feather-m0-baseline.md</a>: deployed W8 record, rebuild lessons</td></tr>
+<tr><td>nRF52840 port (parked)</td><td><a href="/docs/nrf52840-port-plan.md">nrf52840-port-plan.md</a>, <a href="/docs/Teyleten-Robot-Pro-Micro-NRF52840.pdf">Pro Micro manual</a>, <a href="/docs/nice-nano-schamatic.png">nice!nano schematic</a>, <a href="/docs/NRF52840-DK.pdf">nRF52840-DK</a></td></tr>
+</tbody></table></div>
+</section>
+
+<section class="block" id="history"><h2>Payload versions</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Version</th><th>Fields</th><th>Change</th></tr></thead><tbody>
+<tr><td>W9</td><td>24</td><td>+ SHT31 air temperature and humidity.</td></tr>
+<tr><td>W8</td><td>22</td><td>+ sleep mode (deep standby on battery). Tag <code>feather-m0-w8</code>.</td></tr>
+<tr><td>W7</td><td>21</td><td>+ BMP180 pressure and temperature.</td></tr>
+<tr><td>W6</td><td>19</td><td>+ battery millivolts.</td></tr>
+<tr><td>W5</td><td>18</td><td>All fields hex; rain gauge fields; revolutions and period derived by the host.</td></tr>
+<tr><td>W4 · W3 · W2</td><td>—</td><td>Decimal layouts: + clock source · + pin and raw edges · + A/B half-periods. Still decoded.</td></tr>
+</tbody></table></div>
+</section>
+</main></body>
+</html>

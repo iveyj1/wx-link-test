@@ -3,6 +3,7 @@
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 import sqlite3
 import threading
@@ -459,6 +460,19 @@ def handler_for(store):
                 if url.path in ('/', '/index.html'):
                     body = (ROOT / 'web' / 'index.html').read_bytes()
                     kind = 'text/html; charset=utf-8'
+                elif url.path == '/reference.html':
+                    body = (ROOT / 'web' / 'reference.html').read_bytes()
+                    kind = 'text/html; charset=utf-8'
+                elif url.path.startswith('/docs/'):
+                    # Datasheets and design notes in docs/: plain file names only, no subdirectories.
+                    name = url.path[len('/docs/'):]
+                    kinds = {'pdf': 'application/pdf', 'png': 'image/png', 'md': 'text/plain; charset=utf-8'}
+                    m = re.fullmatch(r'[A-Za-z0-9_.-]+\.(pdf|png|md)', name)
+                    path = ROOT / 'docs' / name
+                    if not m or name.startswith('.') or not path.is_file():
+                        self.send_error(404)
+                        return
+                    body, kind = path.read_bytes(), kinds[m.group(1)]
                 elif url.path == '/spindown.html':
                     body = (ROOT / 'web' / 'spindown.html').read_bytes()
                     kind = 'text/html; charset=utf-8'

@@ -786,7 +786,7 @@ void serviceUsb() {
         interrupts();
         char re[21];
         decimal64(n,c); decimal64(rev,r); decimal64(t,p); decimal64(e,re);
-        snprintf(msg,sizeof(msg),"# %s W8 radio=%s pin5=%d pulses=%s revolutions=%s rev_period_ticks=%s raw_edges=%s",
+        snprintf(msg,sizeof(msg),"# %s " FIRMWARE " radio=%s pin5=%d pulses=%s revolutions=%s rev_period_ticks=%s raw_edges=%s",
                  SENSOR ? "sensor" : "receiver",radioOK ? "OK" : "ERROR",digitalRead(REED),c,r,p,re);
         logLine(msg);
         noInterrupts();
