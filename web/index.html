@@ -55,15 +55,19 @@
 <button id="applyRain">Apply rain calibration</button></div><div class="caption">Each debounced D10 closure (about 100 ms per tip) is one tip; the reopening is not counted. Applies to live and historical totals; stored tip counts are unchanged. Saved in this browser.</div></details>
 <div id="rainNote" class="caption" role="status" style="margin-top:8px"></div>
 </section>
-<section class="chartbox" style="margin-top:20px" aria-label="Pressure and temperature">
-<div class="charthead"><h2>Pressure and temperature</h2><div class="nav"><label style="flex-direction:row;align-items:center">Range <select id="wxRange"><option value="21600">6 hours</option><option value="86400">24 hours</option><option value="259200" selected>3 days</option><option value="604800">7 days</option><option value="1209600">14 days</option><option value="2592000">30 days</option></select></label></div></div>
+<section class="chartbox" style="margin-top:20px" aria-label="Pressure, temperature and humidity">
+<div class="charthead"><h2>Pressure, temperature and humidity</h2><div class="nav"><label style="flex-direction:row;align-items:center">Range <select id="wxRange"><option value="21600">6 hours</option><option value="86400">24 hours</option><option value="259200" selected>3 days</option><option value="604800">7 days</option><option value="1209600">14 days</option><option value="2592000">30 days</option></select></label></div></div>
 <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin:0 0 14px">
 <div class="card"><div class="muted" id="pTitle">Station pressure</div><div class="number"><span id="pNow">—</span> <small>hPa</small></div><div class="caption" id="pNote">Needs sensor firmware W7 and a BMP180</div></div>
 <div class="card"><div class="muted">Tendency, 3 h</div><div class="number"><span id="pTrend">—</span> <small>hPa</small></div><div class="caption" id="pTrendNote">change over the last 3 hours</div></div>
 <div class="card"><div class="muted">Enclosure temperature</div><div class="number"><span id="tNow">—</span> <small id="tUnit">°C</small></div><div class="caption" id="tNote">BMP180 inside the sensor box: sun and electronics warm it, so it is not air temperature</div></div>
+<div class="card"><div class="muted">Air temperature</div><div class="number"><span id="aNow">—</span> <small id="aUnit">°C</small></div><div class="caption" id="aNote">Needs sensor firmware W9 and an SHT31</div></div>
+<div class="card"><div class="muted">Relative humidity</div><div class="number"><span id="hNow">—</span> <small>%</small></div><div class="caption" id="hNote">SHT31, outside the box in a radiation shield</div></div>
 </div>
 <canvas id="pChart" role="img" aria-label="Pressure history"></canvas>
 <canvas id="tChart" role="img" aria-label="Enclosure temperature history" style="margin-top:10px"></canvas>
+<canvas id="aChart" role="img" aria-label="Air temperature history" style="margin-top:10px"></canvas>
+<canvas id="hChart" role="img" aria-label="Relative humidity history" style="margin-top:10px"></canvas>
 <div class="foot"><span id="wxScale"></span><span>Line = mean per interval · band = min–max · one reading per minute is stored (kept 400 days) · maintenance windows left out</span></div>
 <details style="margin-top:12px"><summary>Pressure and temperature settings</summary><div class="controls">
 <label>Station altitude, m<input id="altitude" type="number" min="-500" max="9000" step="any" placeholder="0 = station pressure"></label>
@@ -120,7 +124,7 @@ const windows=()=>state?.maintenance||[];
 const winEnd=w=>w.end??clock();
 const inMaint=t=>t!=null&&windows().some(w=>t>=w.start&&t<winEnd(w));
 // Sensor faults (fault.py): one sensor's data is wrong, e.g. a disconnected wire reading calm.
-const SENSOR_NAMES={wind:'Anemometer',rain:'Rain gauge',baro:'Barometer'};
+const SENSOR_NAMES={wind:'Anemometer',rain:'Rain gauge',baro:'Barometer',air:'Air temperature/humidity'};
 const faults=sensor=>(state?.faults||[]).filter(f=>f.sensor===sensor);
 const activeFault=sensor=>(state?.faults_active||[]).find(f=>f.sensor===sensor);
 const inFault=(sensor,t)=>t!=null&&faults(sensor).some(f=>t>=f.start&&t<winEnd(f));
@@ -234,6 +238,8 @@ function paintDiag(p,radioAge){
   add('Missed, 24 h',loss(h24));
   const w7=p.version>='W7';
   add('Barometer',!w7?'— (needs W7)':p.pressure_pa==null?'⚠ BMP180 not answering':`BMP180 · raw ${(p.pressure_pa/100).toFixed(2)} hPa · ${p.temp_c.toFixed(1)} °C`,w7&&p.pressure_pa==null);
+  const w9=p.version>='W9';
+  add('Air sensor',!w9?'— (needs W9)':p.air_temp_c==null?'⚠ SHT31 not answering':`SHT31 · ${p.air_temp_c.toFixed(1)} °C · ${p.rh_pct.toFixed(1)} % RH`,w9&&p.air_temp_c==null);
   add('Battery',p.vbat_v==null?'— (needs W6)':`${p.vbat_v.toFixed(2)} V`,p.vbat_v!=null&&p.vbat_v<3.5);
   add('Sleep',p.sleep==null?'— (needs W8)':p.sleep?'deep standby':'light (USB host seen; reset on battery for deep standby)',p.sleep===0);
   add('32 kHz clock',p.clock==null?'—':p.clock?'⚠ internal fallback (crystal stopped)':'crystal',!!p.clock);
@@ -539,6 +545,7 @@ $('maintBtn').onclick=async()=>{
 // ---- Pressure and temperature (W7+, BMP180) ----
 // Defaults: station elevation 938 ft; no correction needed (Nov 6: sensor matched KARB's altimeter setting to 0.01 hPa).
 const ALT_DEFAULT=285.9, POFF_DEFAULT=0;
+let wxAir=[];
 let wxRange=259200, wxPoints=[], wxFetched=0, wxGen=0, altitude=ALT_DEFAULT, pOffset=POFF_DEFAULT, tUnits='C';
 try{const w=JSON.parse(localStorage.getItem('wxSettings'));if(w){if([21600,86400,259200,604800,1209600,2592000].includes(w.range))wxRange=w.range;
  if(Number.isFinite(w.altitude)&&w.altitude>=-500&&w.altitude<=9000)altitude=w.altitude;if(Number.isFinite(w.pOffset)&&Math.abs(w.pOffset)<=20)pOffset=w.pOffset;if(['C','F'].includes(w.tUnits))tUnits=w.tUnits;}}catch(e){}
@@ -550,7 +557,7 @@ const hPa=pa=>pa==null?null:stationHpa(pa)*SL();
 const tVal=c=>c==null?null:tUnits==='F'?c*9/5+32:c;
 async function loadWx(){
  const gen=++wxGen, now=clock();
- try{const d=await get(`/api/weather?start=${now-wxRange}&end=${now}`);if(gen!==wxGen)return;wxPoints=d.points;wxFetched=Date.now();drawWx();}
+ try{const d=await get(`/api/weather?start=${now-wxRange}&end=${now}`);if(gen!==wxGen)return;wxPoints=d.points;wxAir=d.air||[];wxFetched=Date.now();drawWx();}
  catch(e){if(gen===wxGen)$('wxScale').textContent=`Cannot load pressure: ${e.message}`;}
 }
 // Pressure 3 h ago, from the stored minute rows' buckets (needs history reaching back 3 h).
@@ -566,6 +573,12 @@ function paintWx(){
  $('tNow').textContent=have?pad(tVal(p.temp_c),1,3):'—';
  $('pNote').textContent=have?`at last packet, ${durText(Math.max(0,now-p.received))} ago${altitude?` · station ${stationHpa(p.pressure_pa).toFixed(1)} hPa`:''} · = ${(hPa(p.pressure_pa)/33.8639).toFixed(2)} inHg${pOffset?` · correction ${pOffset>0?'+':''}${pOffset} hPa`:''}`:p&&p.version>='W7'?'No reading: BMP180 not answering':'Needs sensor firmware W7 and a BMP180';
  if(activeFault('baro'))$('pNote').textContent='BAROMETER FAULT: not trusted · '+$('pNote').textContent;
+ const air=p?.air_temp_c!=null;
+ $('aUnit').textContent=tUnits==='F'?'°F':'°C';
+ $('aNow').textContent=air?pad(tVal(p.air_temp_c),1,3):'—';
+ $('hNow').textContent=air?pad(p.rh_pct,1,3):'—';
+ $('aNote').textContent=air?`SHT31 at last packet, ${durText(Math.max(0,now-p.received))} ago`:p&&p.version>='W9'?'No reading: SHT31 not answering':'Needs sensor firmware W9 and an SHT31';
+ if(activeFault('air'))$('aNote').textContent='AIR SENSOR FAULT: not trusted · '+$('aNote').textContent;
  const ago=pressureAgo(now,10800);
  if(have&&ago!=null){const d=hPa(p.pressure_pa)-hPa(ago);
   $('pTrend').textContent=(d>=0?'+':'−')+pad(Math.abs(d),1,2).trimStart();
@@ -602,6 +615,8 @@ function drawWx(){
  const now=clock(), start=now-wxRange, pu=altitude?'hPa sea level':'hPa', tu=tUnits==='F'?'°F':'°C';
  const pr=drawBand($('pChart'),wxPoints.map(p=>({t0:p.t0,mean:hPa(p.p),lo:hPa(p.plo),hi:hPa(p.phi)})),start,wxRange,v=>v.toFixed(1),`Pressure, ${pu}`,'#b48cff');
  const tr=drawBand($('tChart'),wxPoints.map(p=>({t0:p.t0,mean:tVal(p.c),lo:tVal(p.clo),hi:tVal(p.chi)})),start,wxRange,v=>v.toFixed(1),`Enclosure temperature, ${tu}`,'#ff9f6c');
+ drawBand($('aChart'),wxAir.map(p=>({t0:p.t0,mean:tVal(p.c),lo:tVal(p.clo),hi:tVal(p.chi)})),start,wxRange,v=>v.toFixed(1),`Air temperature (SHT31), ${tu}`,'#6cc4ff');
+ drawBand($('hChart'),wxAir.map(p=>({t0:p.t0,mean:p.h,lo:p.hlo,hi:p.hhi})),start,wxRange,v=>v.toFixed(0),'Relative humidity, %','#5fd3a0');
  $('wxScale').textContent=pr?`Pressure ${pr} ${pu} · temperature ${tr} ${tu} · last ${durText(wxRange)}`:state?.maintenance_active&&state.latest?.pressure_pa!=null?'No readings outside maintenance in this range yet (readings during maintenance are hidden)':'No pressure readings in this range yet (sensor firmware W7 with a BMP180)';
  paintWx();
 }

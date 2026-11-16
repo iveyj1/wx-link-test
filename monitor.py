@@ -29,26 +29,33 @@ def decode(line):
         raise ValueError('unexpected frame')
     fields = payload.split(',')
     version, session, seq = fields[:3]
-    if version in ('W5', 'W6', 'W7', 'W8'):
+    if version in ('W5', 'W6', 'W7', 'W8', 'W9'):
         # All numbers hex; revolutions and period are derived (see link.ino report()).
         # W6 = W5 + battery millivolts. W7 = W6 + pressure (Pa) and temperature (0.1 K), 0 = none.
         # W8 = W7 + sleep mode (0 = light sleep, 1 = deep standby).
-        if len(fields) != {'W5': 18, 'W6': 19, 'W7': 21, 'W8': 22}[version] or not re.fullmatch(r'[0-9a-f]{8}', session):
+        # W9 = W8 + SHT31 air temperature (0.1 K) and relative humidity (0.1 %), both 0 = none.
+        if len(fields) != {'W5': 18, 'W6': 19, 'W7': 21, 'W8': 22, 'W9': 24}[version] or not re.fullmatch(r'[0-9a-f]{8}', session):
             raise ValueError(f'invalid {version} frame')
-        vbat = baro = sleep = None
-        if version == 'W8':
+        vbat = baro = sleep = air = None
+        if version == 'W9':
+            *fields, air_dk, rh_pm = fields
+            air_dk, rh_pm = hex64(air_dk), hex64(rh_pm)
+            if (air_dk == 0 and rh_pm != 0) or rh_pm > 1000 or (air_dk and not 2282 <= air_dk <= 4032):
+                raise ValueError('invalid SHT31 fields')
+            air = (air_dk, rh_pm)
+        if version in ('W8', 'W9'):
             *fields, sleep = fields
             if sleep not in ('0', '1'):
                 raise ValueError('invalid sleep mode')
             sleep = int(sleep)
-        if version in ('W7', 'W8'):
+        if version in ('W7', 'W8', 'W9'):
             *fields, pressure, temp = fields
             pressure, temp = hex64(pressure), hex64(temp)
             if (pressure == 0) != (temp == 0) or pressure > 110000 or temp > 0xfff or (
                     pressure and not (30000 <= pressure and 2232 <= temp <= 3582)):
                 raise ValueError('invalid barometer fields')
             baro = (pressure, temp)
-        if version in ('W6', 'W7', 'W8'):
+        if version in ('W6', 'W7', 'W8', 'W9'):
             *fields, vbat = fields
             vbat = hex64(vbat)
             if vbat > 0xffff:
@@ -68,6 +75,9 @@ def decode(line):
             extra['vbat_mv'] = vbat
         if sleep is not None:
             extra['sleep'] = sleep
+        if air is not None:
+            extra['air_temp_c'] = (air[0] - 2732) / 10 if air[0] else None
+            extra['rh_pct'] = air[1] / 10 if air[0] else None
         if baro is not None:
             extra['pressure_pa'] = baro[0] or None
             extra['temp_c'] = (baro[1] - 2732) / 10 if baro[1] else None
@@ -103,18 +113,18 @@ def decode(line):
     data = dict(version=version, session=session, seq=int(seq), count=int(count),
                 period=int(period), age=int(age), uptime=int(uptime),
                 rssi=int(rssi), snr=int(snr), **extra)
-    if version in ('W4', 'W5', 'W6', 'W7', 'W8'):
+    if version in ('W4', 'W5', 'W6', 'W7', 'W8', 'W9'):
         data['clock'] = int(clock)  # 0 = crystal, 1 = internal fallback (less accurate timing)
     values = [data[k] for k in ('count', 'period', 'age', 'uptime')]
-    if version in ('W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8'):
-        values += [v for k, v in extra.items() if k not in ('pressure_pa', 'temp_c')]
+    if version in ('W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9'):
+        values += [v for k, v in extra.items() if k not in ('pressure_pa', 'temp_c', 'air_temp_c', 'rh_pct')]
         if extra['revolutions'] != max(0, (data['count'] - 1) // 2):
             raise ValueError('inconsistent revolution count')
         if data['period'] != extra['interval_a'] + extra['interval_b']:
             raise ValueError('inconsistent paired period')
         if bool(extra['revolutions']) != bool(data['period']):
             raise ValueError('inconsistent period validity')
-    if version in ('W3', 'W4', 'W5', 'W6', 'W7', 'W8') and extra['raw_edges'] < data['count']:
+    if version in ('W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9') and extra['raw_edges'] < data['count']:
         raise ValueError('fewer raw edges than counted pulses')
     if any(not 0 <= value <= UNKNOWN for value in values):
         raise ValueError('invalid unsigned value')
@@ -148,7 +158,7 @@ def format_measurement(data):
 
 def reed_state(data):
     """W3 raw D5 diagnostics; empty for W2. D5 is active-low with a pull-up: 1 = open."""
-    if data['version'] not in ('W3', 'W4', 'W5', 'W6', 'W7', 'W8'):
+    if data['version'] not in ('W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9'):
         return ''
     level = 'open(high)' if data['pin'] else 'closed(low)'
     clock = 'CLOCK=INTERNAL_FALLBACK(timing less accurate) ' if data.get('clock') else ''
@@ -162,6 +172,8 @@ def reed_state(data):
         text += f"VBAT={data['vbat_mv'] / 1000:.3f}V "
     if data.get('pressure_pa'):
         text += f"P={data['pressure_pa'] / 100:.2f}hPa T={data['temp_c']:.1f}C "
+    if data.get('air_temp_c') is not None:
+        text += f"AIR={data['air_temp_c']:.1f}C RH={data['rh_pct']:.1f}% "
     if 'sleep' in data:
         text += f"SLEEP={'deep' if data['sleep'] else 'light'} "
     return text

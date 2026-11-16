@@ -21,21 +21,22 @@ import sys
 import time
 
 from maint import DB, show, when
-from web_server import FAULTS_TABLE, SENSORS
+from web_server import SENSORS, ensure_faults_table
 
 SAMPLES = {
     'wind': 'SELECT COUNT(*) FROM samples WHERE t - period < ? AND t >= ?',
     'rain': 'SELECT COALESCE(SUM(added), 0) FROM rain WHERE t < ? AND t >= ?',
     'baro': 'SELECT COUNT(*) FROM weather WHERE t < ? AND t >= ?',
+    'air': 'SELECT COUNT(*) FROM climate WHERE t < ? AND t >= ?',
 }
-UNITS = {'wind': 'revolutions', 'rain': 'tips', 'baro': 'readings'}
+UNITS = {'wind': 'revolutions', 'rain': 'tips', 'baro': 'readings', 'air': 'readings'}
 
 
 def connect(path):
     if not path.exists():
         sys.exit(f'No database at {path}')
     db = sqlite3.connect(str(path), timeout=10)
-    db.execute(FAULTS_TABLE)
+    ensure_faults_table(db)
     return db
 
 

@@ -19,14 +19,14 @@ RETENTION = 7 * 86400
 RAIN_RETENTION = 400 * 86400  # rain rows are tiny; keep over a year of daily totals
 GAP = 3600  # no packet for this long is recorded as a data gap
 WEATHER_STEP = 60  # seconds between stored barometer rows (the sensor reads every 30 s)
-VERSIONS = ('W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8')
+VERSIONS = ('W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9')
 # Maintenance windows (takedown, bench tests): data is still recorded, but graphs and rain
 # totals leave out samples whose revolution overlaps a window and tips inside one.
 # end NULL = in progress.
 IN_WINDOW = ('EXISTS (SELECT 1 FROM maintenance m WHERE {lo} < COALESCE(m.end, 1e18) AND {hi} >= m.start)')
 # Sensor faults (fault.py): one sensor's readings are wrong (e.g. a disconnected reed wire reads
 # as calm). Left out of that sensor's graphs and totals only, like a maintenance window.
-SENSORS = ('wind', 'rain', 'baro')
+SENSORS = ('wind', 'rain', 'baro', 'air')
 IN_FAULT = ("EXISTS (SELECT 1 FROM faults f WHERE f.sensor = '{sensor}' "
             "AND {lo} < COALESCE(f.end, 1e18) AND {hi} >= f.start)")
 
@@ -38,11 +38,24 @@ def _ok(sensor, lo, hi):
 SAMPLE_OK = _ok('wind', 't - period', 't')
 TIP_OK = _ok('rain', 't', 't')
 WEATHER_OK = _ok('baro', 't', 't')
+CLIMATE_OK = _ok('air', 't', 't')
 
 
 FAULTS_TABLE = '''CREATE TABLE IF NOT EXISTS faults (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, sensor TEXT NOT NULL CHECK (sensor IN ('wind', 'rain', 'baro')),
+    id INTEGER PRIMARY KEY AUTOINCREMENT, sensor TEXT NOT NULL CHECK (sensor IN ('wind', 'rain', 'baro', 'air')),
     start REAL NOT NULL, end REAL, note TEXT NOT NULL DEFAULT '')'''
+
+
+def ensure_faults_table(db):
+    """Create the faults table, or rebuild an older one whose CHECK lacks a newer sensor (W9: 'air')."""
+    db.execute(FAULTS_TABLE)
+    sql = db.execute("SELECT sql FROM sqlite_master WHERE name = 'faults'").fetchone()[0]
+    if "'air'" not in sql:
+        with db:
+            db.execute('ALTER TABLE faults RENAME TO faults_old')
+            db.execute(FAULTS_TABLE)
+            db.execute('INSERT INTO faults(id, sensor, start, end, note) SELECT id, sensor, start, end, note FROM faults_old')
+            db.execute('DROP TABLE faults_old')
 
 
 class Store:
@@ -87,10 +100,12 @@ class Store:
           -- Pressure is station pressure in Pa; temperature is inside the sensor enclosure.
           CREATE TABLE IF NOT EXISTS weather (t REAL NOT NULL, pressure_pa INTEGER NOT NULL, temp_c REAL NOT NULL);
           CREATE INDEX IF NOT EXISTS weather_time ON weather(t);
+          CREATE TABLE IF NOT EXISTS climate (t REAL NOT NULL, temp_c REAL NOT NULL, rh_pct REAL NOT NULL);
+          CREATE INDEX IF NOT EXISTS climate_time ON climate(t);
           CREATE TABLE IF NOT EXISTS maintenance (
             id INTEGER PRIMARY KEY AUTOINCREMENT, start REAL NOT NULL, end REAL, note TEXT NOT NULL DEFAULT '');
         ''')
-        self.db.execute(FAULTS_TABLE)
+        ensure_faults_table(self.db)
         if not self.db.execute('SELECT 1 FROM runs LIMIT 1').fetchone():
             self.backfill_runs()
         if 'clock' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
@@ -106,8 +121,14 @@ class Store:
         if 'sleep' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
             # W8: MCU sleep mode, 0 = light sleep (USB host seen), 1 = deep standby. NULL before W8.
             self.db.execute('ALTER TABLE packets ADD COLUMN sleep INTEGER')
+        if 'air_temp_c' not in [r[1] for r in self.db.execute('PRAGMA table_info(packets)')]:
+            # W9: SHT31 air temperature (deg C) and relative humidity (%). NULL = none or before W9.
+            self.db.execute('ALTER TABLE packets ADD COLUMN air_temp_c REAL')
+            self.db.execute('ALTER TABLE packets ADD COLUMN rh_pct REAL')
         last = self.db.execute('SELECT MAX(t) FROM weather').fetchone()[0]
         self.last_weather = last or 0
+        last = self.db.execute('SELECT MAX(t) FROM climate').fetchone()[0]
+        self.last_climate = last or 0
         row = self.db.execute("SELECT value FROM state WHERE key='latest'").fetchone()
         self.latest = json.loads(row[0]) if row else None
         self.connected = False
@@ -163,6 +184,9 @@ class Store:
             if packet.get('pressure_pa') and received - self.last_weather >= WEATHER_STEP:
                 self.db.execute('INSERT INTO weather VALUES(?,?,?)', (received, packet['pressure_pa'], packet['temp_c']))
                 self.last_weather = received
+            if packet.get('air_temp_c') is not None and received - self.last_climate >= WEATHER_STEP:
+                self.db.execute('INSERT INTO climate VALUES(?,?,?)', (received, packet['air_temp_c'], packet['rh_pct']))
+                self.last_climate = received
             latest['vbat_v'] = packet['vbat_mv'] / 1000 if 'vbat_mv' in packet else None
             if 'rain_tips' in packet:
                 tips = packet['rain_tips']
@@ -183,13 +207,14 @@ class Store:
                 latest['raw_edges'] = str(packet['raw_edges'])
                 latest['pin_age_s'] = None if packet['pin_age'] == UNKNOWN else packet['pin_age'] / HZ
             self.db.execute('INSERT INTO packets(t,version,session,seq,pulses,revs,uptime,pin,pin_age,raw_edges,rssi,snr,clock,vbat_mv,'
-                            'pressure_pa,temp_c,sleep) '
-                            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                            'pressure_pa,temp_c,sleep,air_temp_c,rh_pct) '
+                            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                             (received, packet['version'], packet['session'], packet['seq'], latest['count'],
                              latest['revolutions'], str(packet['uptime']), packet['pin'] if w3 else None,
                              str(packet['pin_age']) if w3 else None, latest['raw_edges'] if w3 else None,
                              packet['rssi'], packet['snr'], packet.get('clock'), packet.get('vbat_mv'),
-                             packet.get('pressure_pa'), packet.get('temp_c'), packet.get('sleep')))
+                             packet.get('pressure_pa'), packet.get('temp_c'), packet.get('sleep'),
+                             packet.get('air_temp_c'), packet.get('rh_pct')))
             new_measurement = period > 0 and (restart or latest['revolutions'] != old['revolutions'])
             if new_measurement:
                 self.db.execute('INSERT INTO samples(t,stream,hz,period,a,b,imbalance,revs,pulses) VALUES(?,?,?,?,?,?,?,?,?)',
@@ -206,6 +231,7 @@ class Store:
                 self.db.execute('DELETE FROM packets WHERE t < ?', (received - RETENTION,))
                 self.db.execute('DELETE FROM rain WHERE t < ?', (received - RAIN_RETENTION,))
                 self.db.execute('DELETE FROM weather WHERE t < ?', (received - RAIN_RETENTION,))
+                self.db.execute('DELETE FROM climate WHERE t < ?', (received - RAIN_RETENTION,))
                 self.db.execute('DELETE FROM runs WHERE last_t < ?', (received - RAIN_RETENTION,))
                 self.db.execute('DELETE FROM gaps WHERE end < ?', (received - RAIN_RETENTION,))
                 self.last_prune = received
@@ -320,8 +346,15 @@ class Store:
                 'MAX(pressure_pa) AS phi, AVG(temp_c) AS c, MIN(temp_c) AS clo, MAX(temp_c) AS chi, COUNT(*) AS n '
                 f'FROM weather WHERE t >= :s AND t < :e AND {WEATHER_OK} GROUP BY t0 ORDER BY t0',
                 dict(s=start, e=end, b=bucket)).fetchall()
+            air = self.db.execute(
+                'SELECT :s + CAST((t - :s) / :b AS INTEGER) * :b AS t0, AVG(temp_c) AS c, MIN(temp_c) AS clo, '
+                'MAX(temp_c) AS chi, AVG(rh_pct) AS h, MIN(rh_pct) AS hlo, MAX(rh_pct) AS hhi, COUNT(*) AS n '
+                f'FROM climate WHERE t >= :s AND t < :e AND {CLIMATE_OK} GROUP BY t0 ORDER BY t0',
+                dict(s=start, e=end, b=bucket)).fetchall()
             return dict(start=start, end=end, bucket=bucket, points=[dict(r) for r in rows], now=time.time(),
-                        faults=[f for f in self.faults(start, 'baro') if f['start'] < end])
+                        faults=[f for f in self.faults(start, 'baro') if f['start'] < end],
+                        air=[dict(r) for r in air],
+                        air_faults=[f for f in self.faults(start, 'air') if f['start'] < end])
 
     def rain_total(self, start, end):
         """Tips in [start, end) with what qualifies the total: sensor restarts inside the period

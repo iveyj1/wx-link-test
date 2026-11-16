@@ -114,6 +114,22 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(len(worst), 223)
         self.assertLessEqual(len(f'+RCV=1,{len(worst)},{worst},-120,-20'), 255)
 
+    def test_w9_sht31(self):
+        base = 'W9,abcd1234,2,3,2000,6000,148,148,186a0,1,ffffffffffffffff,3,0,0,0,ffffffffffffffff,1,0,1036,18bcd,b7b,1'
+        good = decode(frame(base + ',b9a,1f4'))  # 0xb9a = 2970 -> 23.8 C, 0x1f4 = 50.0 %
+        self.assertEqual((good['air_temp_c'], good['rh_pct'], good['sleep'], good['pressure_pa']), (23.8, 50.0, 1, 101325))
+        self.assertIn('AIR=23.8C RH=50.0%', format_measurement(good))
+        none = decode(frame(base + ',0,0'))
+        self.assertIsNone(none['air_temp_c']); self.assertIsNone(none['rh_pct'])
+        for bad in (base, base + ',0,1f4', base + ',b9a,3e9', base + ',8e9,1f4', base + ',fc1,0', base + ',b9a'):
+            with self.assertRaises(ValueError, msg=bad):
+                decode(frame(bad))
+        f, c = 'f' * 16, 'f' * 8
+        worst = f'W9,ffffffff,ffffffff,{f},{c},{c},{f},{f},{f},1,{f},{f},1,{f},{c},{f},1,{f},19c8,1adb0,dfe,1,fc0,3e8'
+        self.assertEqual(len(worst), 231)
+        self.assertLessEqual(len(worst), 240)
+        self.assertLessEqual(len(f'+RCV=1,{len(worst)},{worst},-120,-20'), 255)
+
     def test_max_length(self):
         # All eight uint64 fields at full width still fit the module and receiver.
         payload = 'W2,ffffffff,4294967295,' + ','.join([str(UNKNOWN)]*8)

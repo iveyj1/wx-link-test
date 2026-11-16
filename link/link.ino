@@ -5,12 +5,13 @@
 #include "Diagnostics.h"
 #include "RadioUart.h"
 #include "Bmp180.h"
+#include "Sht31.h"
 #include <Wire.h>
 #ifndef SENSOR
 #define SENSOR 1
 #endif
 
-#define FIRMWARE "W8-uart1"
+#define FIRMWARE "W9-sht31"
 constexpr uint32_t HZ = 32768;
 constexpr uint8_t REED = 5;
 constexpr uint8_t VBAT = A7; // = D9: battery through the Feather's 1:2 divider (do not use D9 otherwise)
@@ -506,6 +507,54 @@ void baroService() {
   if (baroRead()) { baroHave = true; baroGoodMs = ms; }
   else if (++baroErrors, ms - baroGoodMs > BARO_STALE_MS) baroOK = false; // re-probe later
 }
+// ---- SHT31 air temperature and humidity on the same bus (0x44, or 0x45 with ADDR high) ----
+// Same cadence and failure handling as the barometer: single-shot reads every SHT_EVERY_MS
+// (~16 ms of delay()), fields 0 when absent or stale, re-probed every 10 min, and off for the rest of
+// the boot after a watchdog reset during any I2C access (the stage is shared: ST_BARO).
+constexpr uint32_t SHT_EVERY_MS = 30000;
+uint8_t shtAddr = 0;  // 0 = not found
+bool shtHave = false;
+uint16_t shtDeciK = 0, shtPermille = 0;
+uint32_t shtReadMs = 0, shtProbeMs = 0, shtGoodMs = 0, shtErrors = 0;
+bool shtCommand(uint8_t addr, uint16_t cmd) {
+  Wire.beginTransmission(addr); Wire.write(uint8_t(cmd >> 8)); Wire.write(uint8_t(cmd));
+  return Wire.endTransmission() == 0;
+}
+bool shtBegin() {
+  StageScope stage(ST_BARO);
+  shtProbeMs = wallMs();
+  static const uint8_t addrs[] = {0x44, 0x45};
+  for (uint8_t addr : addrs) {
+    uint8_t b[3];
+    if (!shtCommand(addr, 0xF32D) || Wire.requestFrom(addr, uint8_t(3)) != 3) continue; // read status
+    for (uint8_t &x : b) x = Wire.read();
+    if (sht31Crc(b, 2) == b[2]) { shtAddr = addr; return true; }
+  }
+  shtAddr = 0;
+  return false;
+}
+bool shtRead() {
+  StageScope stage(ST_BARO);
+  uint8_t b[6];
+  if (!shtCommand(shtAddr, 0x2400)) return false;  // single shot, high repeatability, no stretching
+  delay(16);
+  if (Wire.requestFrom(shtAddr, uint8_t(6)) != 6) return false;
+  for (uint8_t &x : b) x = Wire.read();
+  return sht31Decode(b, shtDeciK, shtPermille);
+}
+void shtService() {
+  if (baroDisabled) return;  // stuck bus this boot
+  const uint32_t ms = wallMs();
+  if (!shtAddr) {
+    if (shtProbeMs && ms - shtProbeMs < BARO_RETRY_MS) return;
+    if (!shtBegin()) return;
+    shtReadMs = ms - SHT_EVERY_MS;
+  }
+  if (shtHave && ms - shtReadMs < SHT_EVERY_MS) return;
+  shtReadMs = ms;
+  if (shtRead()) { shtHave = true; shtGoodMs = ms; }
+  else if (++shtErrors, ms - shtGoodMs > BARO_STALE_MS) shtAddr = 0; // re-probe later
+}
 void i2cScan() {
   StageScope stage(ST_BARO);
   char msg[200] = "# i2c devices:"; size_t n = strlen(msg);
@@ -547,7 +596,12 @@ void report() {
   baroService();
   const bool baroFresh = baroHave && wallMs() - baroGoodMs < BARO_STALE_MS;
   const uint64_t pressurePa = baroFresh ? baroPa : 0, tempDeciK = baroFresh ? baroDeciC + 2732 : 0; // 0 = none
+  shtService();
+  const bool shtFresh = shtHave && shtAddr && wallMs() - shtGoodMs < BARO_STALE_MS;
+  const uint64_t airDeciK = shtFresh ? shtDeciK : 0, rhPermille = shtFresh ? shtPermille : 0; // 0 = none
   char payload[256], cmd[288];
+  // W9 = W8 + SHT31 air temperature (0.1 K, <= 3 digits) and relative humidity (0.1 %, <= 3 digits),
+  //      both 0 when there is no fresh reading. Worst case 223 + 8 = 231 bytes (limit 240).
   // W8 = W7 + sleep mode digit (0 = light sleep, 1 = deep standby).
   // W7: every number is lowercase hex. uint64 fields take <= 16 digits; A, B and rain_interval
   // are capped at ffffffff (36 h), pressure (<= 110000 Pa) at 5 and temperature at 3, so the worst
@@ -560,7 +614,7 @@ void report() {
   // Pins: 1 = open/high. rain_interval 0 = fewer than two tips; ages all-f = never.
   auto cap32 = [](uint64_t v) { return v > 0xffffffffULL ? uint64_t(0xffffffffULL) : v; };
   const uint64_t fields[] = {count,cap32(intervalA),cap32(intervalB),age,revAge,now};
-  char *out = payload + snprintf(payload,sizeof(payload),"W8,%08lx,%lx",
+  char *out = payload + snprintf(payload,sizeof(payload),"W9,%08lx,%lx",
                                  (unsigned long)session,(unsigned long)++sequence);
   for (uint64_t v : fields) out = hex64(v,out);
   *out++ = ','; *out++ = '0' + pin;
@@ -572,6 +626,7 @@ void report() {
   out = hex64(vbatMv,out);
   out = hex64(pressurePa,out); out = hex64(tempDeciK,out);
   *out++ = ','; *out++ = '0' + deepSleep;
+  out = hex64(airDeciK,out); out = hex64(rhPermille,out);
   *out = 0;
   logLine(payload);
   if (SENSOR && consecutiveFails >= RADIO_RESET_AFTER_FAILS &&
@@ -665,7 +720,7 @@ void setup() {
     Wire.begin(); Wire.setClock(100000);
     // A watchdog reset inside an I2C access means a stuck bus: leave the barometer off this boot.
     baroDisabled = previousTraceValid && previousTrace.stage == ST_BARO;
-    if (!baroDisabled) baroOK = baroBegin();
+    if (!baroDisabled) { baroOK = baroBegin(); shtBegin(); }
   }
   traceRecord.session = session;
   wdtBegin();
@@ -745,6 +800,14 @@ void serviceUsb() {
                  baroDisabled ? "DISABLED(wdt during i2c)" : baroOK ? "OK" : "absent",(long)baroPa,baroDeciC < 0 ? "-" : "",
                  (long)(abs(baroDeciC)/10),(long)(abs(baroDeciC)%10),(unsigned long)baroErrors,(unsigned long)(baroHave ? wallMs()-baroGoodMs : 0));
         logLine(msg);
+        {
+          const int32_t dc = int32_t(shtDeciK) - 2732;
+          snprintf(msg,sizeof(msg),"# air SHT31 %s addr=0x%02x temp=%s%ld.%ld C rh=%u.%u %% errors=%lu last_good_ms_ago=%lu",
+                   baroDisabled ? "DISABLED(wdt during i2c)" : shtAddr ? "OK" : "absent",shtAddr,dc < 0 ? "-" : "",
+                   (long)(abs(dc)/10),(long)(abs(dc)%10),shtPermille/10,shtPermille%10,(unsigned long)shtErrors,
+                   (unsigned long)(shtHave ? wallMs()-shtGoodMs : 0));
+          logLine(msg);
+        }
         snprintf(msg,sizeof(msg),"# fw=" FIRMWARE " session=%08lx reset=0x%02x sleepprm=%u standby=%lu/%lu tx_ok=%lu tx_fail=%lu",
                  (unsigned long)session,resetCause,(unsigned)NVMCTRL->CTRLB.bit.SLEEPPRM,
                  (unsigned long)standbyEntries,(unsigned long)standbyReturns,

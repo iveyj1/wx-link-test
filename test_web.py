@@ -174,6 +174,22 @@ class WebTests(unittest.TestCase):
         self.assertEqual(tuple(self.store.db.execute('SELECT version, sleep FROM packets').fetchone()), ('W8', 1))
         self.assertEqual(self.store.latest['sleep'], 1)
 
+    def test_w9_air_logged(self):
+        base = ('W9,abcd1234,{seq},3,2000,6000,148,148,186a0,1,ffffffffffffffff,3,0,'
+                '0,0,ffffffffffffffff,1,0,1000,18bcd,b7b,1,{air}')
+        now = 1_800_000_000.0
+        for i, air in enumerate(('b9a,1f4', 'ba4,1fe', '0,0')):
+            p = base.format(seq=i + 1, air=air)
+            self.store.accept(decode(f'+RCV=1,{len(p)},{p},-80,9'), now + 61 * i)
+        rows = self.store.db.execute('SELECT air_temp_c, rh_pct FROM packets ORDER BY t').fetchall()
+        self.assertEqual([tuple(r) for r in rows], [(23.8, 50.0), (24.8, 51.0), (None, None)])
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM climate').fetchone()[0], 2)
+        self.assertIsNone(self.store.latest['air_temp_c'])
+        air = self.store.weather(now, now + 600, 600)['air']
+        self.assertEqual((air[0]['n'], air[0]['clo'], air[0]['chi'], air[0]['h']), (2, 23.8, 24.8, 50.5))
+        self.store.db.execute("INSERT INTO faults(sensor, start, end, note) VALUES('air', ?, ?, '')", (now + 30, now + 100))
+        self.assertEqual(self.store.weather(now, now + 600, 600)['air'][0]['n'], 1)
+
     def test_condensed_history(self):
         now = 1_800_000_000.0
         # 30 one-second revolutions in one 60 s bucket, then a 300 s calm revolution.
