@@ -6,6 +6,7 @@
 //   u      RYLR998 UART timing: 250 bytes via Serial1 (64-byte chunks) vs one DMA transfer
 //   p      reed-path loopback on P0.22: generated pulses, bounce and dropouts -> PulseCounter
 //   v0/v1  drive P0.13 low/high: VCC off/on on this board (active-high enable, strong pull-up)
+//   r42    write 0x42 to GPREGRET and reset (retention test; 'i' shows it at boot)
 //   dfu/uf2 reset into the bootloader (serial DFU only / UF2 drive + serial)
 //   all    i, c, a, u, p
 // On battery (no VBUS at boot) it runs the sleep-current test instead: 3 LED blinks, then System ON
@@ -38,8 +39,10 @@ static bool hfxoStart() {
 }
 
 // ---- info ----
+static uint32_t bootGpregret, bootGpregret2;
 static void info() {
   Serial.println("== board ==");
+  Serial.printf("GPREGRET at boot 0x%02lx, GPREGRET2 0x%02lx\n", (unsigned long)bootGpregret, (unsigned long)bootGpregret2);
   Serial.printf("bootloader version 0x%08lx, reset reason 0x%08lx\n", (unsigned long)bootloaderVersion,
                 (unsigned long)readResetReason());
   const uint32_t sdBase = 0x1000;
@@ -260,6 +263,7 @@ static void sleepTest() {
 }
 
 void setup() {
+  bootGpregret = NRF_POWER->GPREGRET; bootGpregret2 = NRF_POWER->GPREGRET2;
   if (!(NRF_POWER->USBREGSTATUS & POWER_USBREGSTATUS_VBUSDETECT_Msk)) sleepTest();
   cycBegin();
   pinMode(PIN_LED, OUTPUT);
@@ -286,10 +290,24 @@ void loop() {
       digitalWrite(PIN_VCC_SWITCH, line == "v1");
       Serial.printf("P0.13 driven %s: measure the VCC pin now\n", line == "v1" ? "HIGH" : "LOW");
     }
+    if (line == "r42") {
+      // GPREGRET retention test: a value the bootloader ignores; 'i' after the reset should show 0x42.
+      NRF_POWER->GPREGRET = 0x42;
+      Serial.printf("GPREGRET written, reads back 0x%02lx; resetting\n", (unsigned long)NRF_POWER->GPREGRET);
+      Serial.flush(); delay(100);
+      NVIC_SystemReset();
+    }
     if (line == "dfu" || line == "uf2") {
       // Reset into the bootloader: 0x4E = serial DFU only, 0x57 = UF2 drive + serial.
       Serial.printf("resetting to bootloader (%s)\n", line.c_str());
       Serial.flush(); delay(100);
+      // The bootloader clears GPREGRET but then starts the app again within ~0.2 s, before USB enumerates:
+      // its 3 s "no USB" timer seems to fire at once. Suspect: RTC/LFCLK state left running by the app.
+      // Stop them so the bootloader starts its app_timer from a clean clock.
+      __disable_irq();
+      NRF_RTC2->TASKS_STOP = 1; NRF_RTC1->TASKS_STOP = 1;
+      NRF_RTC2->INTENCLR = 0xffffffff; NRF_RTC1->INTENCLR = 0xffffffff;
+      NRF_CLOCK->TASKS_LFCLKSTOP = 1;
       NRF_POWER->GPREGRET = line == "dfu" ? 0x4E : 0x57;
       NVIC_SystemReset();
     }
