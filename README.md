@@ -73,7 +73,8 @@ $CLI upload -p /dev/ttyACM0 --fqbn adafruit:samd:adafruit_feather_m0 --input-dir
 * **Sensor board (UF2 bootloader):** this host must ignore the bootloader's USB drive or flashing fails with
   "No device found". Once per boot: `echo 239a:0015:i | sudo tee /sys/module/usb_storage/parameters/quirks`, or
   permanently `options usb-storage quirks=239a:0015:i` in `/etc/modprobe.d/feather-uf2.conf`.
-* **After a flash or `!diag-reset` this host may not notice the reset**: the old port stays listed but answers nothing.
+* **Plug the sensor into a PC port, not the VIA 2109:2813 hub.** Through that hub the host misses a flash or
+  `!diag-reset`: the old port stays listed but answers nothing.
   Open and close the port (e.g. send any `!` command) and it re-enumerates within seconds. The sensor holds light
   sleep for 3 minutes after a software reset so this works; after that, press reset once.
 * Manual flash from a breathing-LED bootloader (double-tap reset):

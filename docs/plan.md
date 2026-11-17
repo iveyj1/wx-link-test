@@ -24,10 +24,9 @@ Item numbers (F1, D2, H1...) refer to it.
 
 ### A. Small leftovers (no bench)
 1. (Done) README and reference page cover the hourly table and backups.
-2. Untracked files in the repo root, left alone: `notes` (already folded into `docs/lessons.md`), `pinout` (now on the
-   reference page), `agent`, `cl`, `move-session.sh`. Delete or keep as you prefer.
+2. (Done) Stray files in the repo root deleted (Nov 17).
 3. `link.ino` is 690 lines (target was 500). Further split is optional: clock/RTC code is the next candidate.
-4. D8 (needs sudo): `echo 'options usb-storage quirks=239a:0015:i' | sudo tee /etc/modprobe.d/feather-uf2.conf`.
+4. (Done) D8: usb-storage quirk for 239a:0015 made permanent in `/etc/modprobe.d/` (Nov 17).
 
 ### B. Pass 3, firmware fixes on the bench (good SHT31 fitted)
 Flash with `arduino-cli upload -p /dev/ttyACM1 --fqbn adafruit:samd:adafruit_feather_m0 --input-dir build/sensor`.
@@ -43,11 +42,12 @@ Done on Nov 17 (05:00-05:40):
    sends Break + soft reset only if that fails.
 5. (Done) **F6:** `i2cOffForBoot` removed. A reset during I2C starts with I2C off and re-checks after 10 minutes
    (lines low: 1 minute), so a bus that really hangs costs one reset per 10 minutes, not one per minute.
-6. (Mitigated) **F3:** the host (sensor is behind a VIA 2109:2813 hub) logs no disconnect for a software reset,
+6. (Done) **F3:** the host (sensor is behind a VIA 2109:2813 hub) logs no disconnect for a software reset,
    even with the 1 s detach. It re-enumerates after the port is opened and closed. A board in deep standby can't
    answer then. Fix: hold light sleep for 3 minutes after a software reset (`SYST_LIGHT_MS`); the detach was
-   removed. Over 22 resets the port came back after 1-9 pokes (3.5 s to 2.5 min). To check in the morning: plug the sensor into a PC port directly (no hub), `!diag-reset`, and see whether
-   `journalctl -k` logs a disconnect without any poke. If it does, the hub is the cause.
+   removed. Over 22 resets the port came back after 1-9 pokes (3.5 s to 2.5 min). Nov 17 evening: on a PC port (internal Genesys 05e3:0608 hub, 1-11.4) every `!diag-reset`
+   (5/5) was seen at once and re-enumerated in 0.77 s with no poke. **The VIA hub is the cause: keep the sensor
+   off it.** The light-sleep hold stays as a cheap safeguard.
 7. (Done) Final build flashed 05:33 (session bb3ed4fa), 11/11 packets in 10 minutes, tagged `feather-m0-w9`.
 
 ### C. Rebuild and deployment (needs hands)
