@@ -212,8 +212,8 @@ two closures per turn need not be evenly spaced, because A + B is always a full 
 <h3>Environmental sensors (inside a report)</h3>
 <div class="table-wrap"><table>
 <thead><tr><th>Sensor</th><th>Read</th><th>Cost</th><th>Stale → 0</th><th>Re-probe</th></tr></thead><tbody>
-<tr><td>BMP180</td><td>every 30 s, OSS 3 (ultra high resolution)</td><td>~31 ms delay</td><td>5 min</td><td>10 min</td></tr>
-<tr><td>SHT31</td><td>every 30 s, single shot, high repeatability, CRC-8 checked</td><td>~16 ms delay</td><td>5 min</td><td>10 min</td></tr>
+<tr><td>BMP180</td><td>every 30 s, OSS 3 (ultra high resolution)</td><td>~31 ms delay</td><td>5 min</td><td>1 min</td></tr>
+<tr><td>SHT31</td><td>every 30 s, single shot, high repeatability, CRC-8 checked</td><td>~16 ms delay</td><td>5 min</td><td>1 min</td></tr>
 <tr><td>Battery</td><td>every report, 8 × 12-bit ADC</td><td>&lt; 1 ms</td><td>—</td><td>—</td></tr>
 </tbody></table></div>
 <p>Counting carries on in interrupts during the delays. A watchdog reset that happens during any I2C access is taken as a stuck bus: both I2C
