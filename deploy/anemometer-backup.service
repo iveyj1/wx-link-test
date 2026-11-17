@@ -1,0 +1,8 @@
+[Unit]
+Description=Nightly backup of the anemometer history database
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/user/wx-link-test
+ExecStart=/home/user/.local/bin/venv/bin/python /home/user/wx-link-test/backup.py
+NoNewPrivileges=true

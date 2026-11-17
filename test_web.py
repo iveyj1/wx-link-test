@@ -190,6 +190,34 @@ class WebTests(unittest.TestCase):
         self.store.db.execute("INSERT INTO faults(sensor, start, end, note) VALUES('air', ?, ?, '')", (now + 30, now + 100))
         self.assertEqual(self.store.weather(now, now + 600, 600)['air'][0]['n'], 1)
 
+    def test_hourly_summary(self):
+        base = ('W9,abcd1234,{seq:x},3,2000,6000,148,148,186a0,1,ffffffffffffffff,3,0,'
+                '0,0,ffffffffffffffff,1,0,{mv:x},18bcd,b7b,1,b9a,1f4')
+        hour = 1_800_000_000 // 3600 * 3600
+        # Hour 0: seq 1, 2, 4 (3 lost). Hour 1: seq 7 (5 and 6 lost across the boundary), 8.
+        for seq, t, mv in ((1, 10, 4100), (2, 70, 4100), (4, 190, 4098), (7, 3700, 4090), (8, 3760, 4088)):
+            p = base.format(seq=seq, mv=mv)
+            self.store.accept(decode(f'+RCV=1,{len(p)},{p},-80,9'), hour + t)
+        self.store.summarize_hours(hour + 2 * 3600)
+        rows = self.store.hourly(hour, hour + 7200)['points']
+        self.assertEqual([(r['packets'], r['missed'], r['sessions'], r['vbat_min'], r['vbat_max'], r['deep']) for r in rows],
+                         [(3, 1, 1, 4098, 4100, 3), (2, 2, 1, 4088, 4090, 2)])
+        self.assertAlmostEqual(rows[0]['vbat_mv'], (4100 + 4100 + 4098) / 3)
+        self.store.summarize_hours(hour + 2 * 3600)  # idempotent; the current hour is never summarized
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM hourly').fetchone()[0], 2)
+
+    def test_nightly_backup(self):
+        import backup, datetime as dt
+        self.store.accept(packet(), time.time())
+        path = Path(self.temp.name) / 'history.db'
+        for day in range(1, 5):
+            target = backup.backup(path, keep=3, now=dt.datetime(2026, 11, day))
+        kept = sorted(p.name for p in target.parent.iterdir())
+        self.assertEqual(kept, ['history-20261102.sqlite3', 'history-20261103.sqlite3', 'history-20261104.sqlite3'])
+        copy = sqlite3.connect(str(target))
+        self.assertEqual(copy.execute('SELECT COUNT(*) FROM packets').fetchone()[0], 1)
+        copy.close()
+
     def test_condensed_history(self):
         now = 1_800_000_000.0
         # 30 one-second revolutions in one 60 s bucket, then a 300 s calm revolution.

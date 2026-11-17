@@ -101,6 +101,10 @@ class Store:
           -- Pressure is station pressure in Pa; temperature is inside the sensor enclosure.
           CREATE TABLE IF NOT EXISTS weather (t REAL NOT NULL, pressure_pa INTEGER NOT NULL, temp_c REAL NOT NULL);
           CREATE INDEX IF NOT EXISTS weather_time ON weather(t);
+          CREATE TABLE IF NOT EXISTS hourly (
+            hour INTEGER PRIMARY KEY, packets INTEGER NOT NULL, missed INTEGER NOT NULL, sessions INTEGER NOT NULL,
+            vbat_mv REAL, vbat_min INTEGER, vbat_max INTEGER, rssi REAL, rssi_min INTEGER, snr REAL, snr_min INTEGER,
+            deep INTEGER);
           CREATE TABLE IF NOT EXISTS climate (t REAL NOT NULL, temp_c REAL NOT NULL, rh_pct REAL NOT NULL);
           CREATE INDEX IF NOT EXISTS climate_time ON climate(t);
           CREATE TABLE IF NOT EXISTS maintenance (
@@ -126,6 +130,8 @@ class Store:
             # W9: SHT31 air temperature (deg C) and relative humidity (%). NULL = none or before W9.
             self.db.execute('ALTER TABLE packets ADD COLUMN air_temp_c REAL')
             self.db.execute('ALTER TABLE packets ADD COLUMN rh_pct REAL')
+        self.summarize_hours(time.time())
+        self.db.commit()
         last = self.db.execute('SELECT MAX(t) FROM weather').fetchone()[0]
         self.last_weather = last or 0
         last = self.db.execute('SELECT MAX(t) FROM climate').fetchone()[0]
@@ -228,6 +234,8 @@ class Store:
             self.error = None
             self.db.execute("INSERT OR REPLACE INTO state VALUES('latest',?)", (json.dumps(latest),))
             if received - self.last_prune > 3600:
+                self.summarize_hours(received)  # before the packets it reads are pruned
+                self.db.execute('DELETE FROM hourly WHERE hour < ?', (received - RAIN_RETENTION,))
                 self.db.execute('DELETE FROM samples WHERE t < ?', (received - RETENTION,))
                 self.db.execute('DELETE FROM packets WHERE t < ?', (received - RETENTION,))
                 self.db.execute('DELETE FROM rain WHERE t < ?', (received - RAIN_RETENTION,))
@@ -267,6 +275,39 @@ class Store:
                 raise ValueError('unknown maintenance action')
             self.db.commit()
             return self.status()
+
+    def summarize_hours(self, now):
+        """Fill `hourly` for every completed clock hour that still has packets and no row yet.
+        Packets are kept only 7 days; this keeps battery, link quality and loss for 400 days.
+        missed = sequence numbers skipped within a session, counting from the session's last
+        packet before the hour, so a loss across the hour boundary lands in the later hour.
+        deep = packets sent in deep standby. Hours with no packets get no row."""
+        first = self.db.execute('SELECT MIN(t) FROM packets').fetchone()[0]
+        if first is None:
+            return
+        done = self.db.execute('SELECT MAX(hour) FROM hourly').fetchone()[0]
+        hour = int(first // 3600) * 3600 if done is None else done + 3600
+        while hour + 3600 <= now:
+            row = self.db.execute(
+                'SELECT COUNT(*), COUNT(DISTINCT session), AVG(vbat_mv), MIN(vbat_mv), MAX(vbat_mv), AVG(rssi), '
+                'MIN(rssi), AVG(snr), MIN(snr), COALESCE(SUM(sleep = 1), 0) FROM packets WHERE t >= ? AND t < ?',
+                (hour, hour + 3600)).fetchone()
+            if row[0]:
+                missed = 0
+                for session, n, lo, hi in self.db.execute(
+                        'SELECT session, COUNT(DISTINCT seq), MIN(seq), MAX(seq) FROM packets '
+                        'WHERE t >= ? AND t < ? GROUP BY session', (hour, hour + 3600)).fetchall():
+                    before = self.db.execute('SELECT MAX(seq) FROM packets WHERE session = ? AND t < ?',
+                                             (session, hour)).fetchone()[0]
+                    missed += max(0, hi - (before + 1 if before is not None and before < lo else lo) + 1 - n)
+                self.db.execute('INSERT OR REPLACE INTO hourly VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                                (hour, row[0], missed, *row[1:]))
+            hour += 3600
+
+    def hourly(self, start, end):
+        with self.lock:
+            rows = self.db.execute('SELECT * FROM hourly WHERE hour >= ? AND hour < ? ORDER BY hour', (start, end)).fetchall()
+            return dict(start=start, end=end, points=[dict(r) for r in rows], now=time.time())
 
     def link(self, now=None):
         """Radio link quality over the last hour and day, cached for 20 s (polled every second).
@@ -488,6 +529,14 @@ def handler_for(store):
                 elif url.path in ('/math.js', '/app.js'):
                     body = (ROOT / 'web' / url.path[1:]).read_bytes()
                     kind = 'text/javascript; charset=utf-8'
+                elif url.path == '/api/hourly':
+                    params = parse_qs(url.query)
+                    end = float(params.get('end', [str(time.time())])[0])
+                    start = float(params.get('start', [str(end - 30 * 86400)])[0])
+                    if not all(map(math.isfinite, (start, end))) or not 0 < end - start <= 401 * 86400:
+                        raise ValueError('hourly range must be positive and at most 401 days')
+                    body = json.dumps(store.hourly(start, end), allow_nan=False).encode()
+                    kind = 'application/json'
                 elif url.path == '/api/battery':
                     params = parse_qs(url.query)
                     end = float(params.get('end', [str(time.time())])[0])
