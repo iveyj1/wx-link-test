@@ -23,8 +23,7 @@ Item numbers (F1, D2, H1...) refer to it.
 ## To do, in order
 
 ### A. Small leftovers (no bench)
-1. README and `web/reference.html` do not yet mention the `hourly` table, `/api/hourly`, `backup.py` or the backup
-   timer (README: layout table, dashboard-service section and table list; reference page: host tables section).
+1. (Done) README and reference page cover the hourly table and backups.
 2. Untracked files in the repo root, left alone: `notes` (already folded into `docs/lessons.md`), `pinout` (now on the
    reference page), `agent`, `cl`, `move-session.sh`. Delete or keep as you prefer.
 3. `link.ino` is 690 lines (target was 500). Further split is optional: clock/RTC code is the next candidate.
