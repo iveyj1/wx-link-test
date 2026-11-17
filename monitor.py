@@ -17,6 +17,16 @@ def hex64(text):
     return int(text, 16)
 
 
+# Payload versions, oldest first. A new version is added here, to the field counts in decode(),
+# and to whatever it adds; everything written as since(version, 'Wn') then applies to it too.
+VERSIONS = ('W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9')
+
+
+def since(version, first):
+    """True if version is a known payload version at or after first."""
+    return version in VERSIONS and VERSIONS.index(version) >= VERSIONS.index(first)
+
+
 def decode(line):
     if not line.startswith('+RCV='):
         return None
@@ -29,7 +39,7 @@ def decode(line):
         raise ValueError('unexpected frame')
     fields = payload.split(',')
     version, session, seq = fields[:3]
-    if version in ('W5', 'W6', 'W7', 'W8', 'W9'):
+    if since(version, 'W5'):
         # All numbers hex; revolutions and period are derived (see link.ino report()).
         # W6 = W5 + battery millivolts. W7 = W6 + pressure (Pa) and temperature (0.1 K), 0 = none.
         # W8 = W7 + sleep mode (0 = light sleep, 1 = deep standby).
@@ -37,25 +47,25 @@ def decode(line):
         if len(fields) != {'W5': 18, 'W6': 19, 'W7': 21, 'W8': 22, 'W9': 24}[version] or not re.fullmatch(r'[0-9a-f]{8}', session):
             raise ValueError(f'invalid {version} frame')
         vbat = baro = sleep = air = None
-        if version == 'W9':
+        if since(version, 'W9'):
             *fields, air_dk, rh_pm = fields
             air_dk, rh_pm = hex64(air_dk), hex64(rh_pm)
             if (air_dk == 0 and rh_pm != 0) or rh_pm > 1000 or (air_dk and not 2282 <= air_dk <= 4032):
                 raise ValueError('invalid SHT31 fields')
             air = (air_dk, rh_pm)
-        if version in ('W8', 'W9'):
+        if since(version, 'W8'):
             *fields, sleep = fields
             if sleep not in ('0', '1'):
                 raise ValueError('invalid sleep mode')
             sleep = int(sleep)
-        if version in ('W7', 'W8', 'W9'):
+        if since(version, 'W7'):
             *fields, pressure, temp = fields
             pressure, temp = hex64(pressure), hex64(temp)
             if (pressure == 0) != (temp == 0) or pressure > 110000 or temp > 0xfff or (
                     pressure and not (30000 <= pressure and 2232 <= temp <= 3582)):
                 raise ValueError('invalid barometer fields')
             baro = (pressure, temp)
-        if version in ('W6', 'W7', 'W8', 'W9'):
+        if since(version, 'W6'):
             *fields, vbat = fields
             vbat = hex64(vbat)
             if vbat > 0xffff:
@@ -113,10 +123,10 @@ def decode(line):
     data = dict(version=version, session=session, seq=int(seq), count=int(count),
                 period=int(period), age=int(age), uptime=int(uptime),
                 rssi=int(rssi), snr=int(snr), **extra)
-    if version in ('W4', 'W5', 'W6', 'W7', 'W8', 'W9'):
+    if since(version, 'W4'):
         data['clock'] = int(clock)  # 0 = crystal, 1 = internal fallback (less accurate timing)
     values = [data[k] for k in ('count', 'period', 'age', 'uptime')]
-    if version in ('W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9'):
+    if since(version, 'W2'):
         values += [v for k, v in extra.items() if k not in ('pressure_pa', 'temp_c', 'air_temp_c', 'rh_pct')]
         if extra['revolutions'] != max(0, (data['count'] - 1) // 2):
             raise ValueError('inconsistent revolution count')
@@ -124,7 +134,7 @@ def decode(line):
             raise ValueError('inconsistent paired period')
         if bool(extra['revolutions']) != bool(data['period']):
             raise ValueError('inconsistent period validity')
-    if version in ('W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9') and extra['raw_edges'] < data['count']:
+    if since(version, 'W3') and extra['raw_edges'] < data['count']:
         raise ValueError('fewer raw edges than counted pulses')
     if any(not 0 <= value <= UNKNOWN for value in values):
         raise ValueError('invalid unsigned value')
@@ -158,7 +168,7 @@ def format_measurement(data):
 
 def reed_state(data):
     """W3 raw D5 diagnostics; empty for W2. D5 is active-low with a pull-up: 1 = open."""
-    if data['version'] not in ('W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9'):
+    if not since(data['version'], 'W3'):
         return ''
     level = 'open(high)' if data['pin'] else 'closed(low)'
     clock = 'CLOCK=INTERNAL_FALLBACK(timing less accurate) ' if data.get('clock') else ''

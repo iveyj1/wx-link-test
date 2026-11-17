@@ -28,7 +28,7 @@ reference page (`/reference.html`, source `web/reference.html`).
 
 ### Barometer (BMP180)
 * Probed at the first report after boot (chip ID 0x55, calibration EEPROM checked), read at most every 30 s inside a report at ultra-high resolution (oss 3, about 31 ms of `delay()` while counting continues in interrupts). Readings older than 5 min are sent as 0. If it is absent or keeps failing, it is probed again every minute, so it can be connected later.
-* A reset during an I2C access disables the I2C sensors until the next reset, using the breadcrumb (`baro` stage), so a bad I2C bus cannot cause a reset loop. (Planned change F6: replace this with a 1-minute re-check.)
+* A reset during an I2C access disables the I2C sensors until the next reset, using the breadcrumb (`i2c` stage), so a bad I2C bus cannot cause a reset loop. (Planned change F6: replace this with a 1-minute re-check.)
 * Pressure is recorded as raw **station pressure**. The dashboard adds an optional correction and reduces to sea level with the altimeter-setting formula, so it compares directly with METAR altimeter settings. These are already reduced to sea level, so only this station's elevation matters (938 ft = 285.9 m), not the airport's. Check, Nov 6 23:34: KARB 30.03 inHg implies 982.93 hPa here, and the sensor read 982.93 hPa, so the default correction is 0. Settings has a "Calibrate to it now" helper; repeat on a few days (METARs are rounded to 0.34 hPa), especially once the sensor is outside and colder.
 * The dashboard shows pressure, its 3 h tendency, temperature, and 6 h–30 day charts. `!i2c-scan` lists I2C devices; `!status` includes `baro` and `air` lines.
 
@@ -39,7 +39,7 @@ reference page (`/reference.html`, source `web/reference.html`).
 * It reads air temperature only when mounted outside the enclosure in a radiation shield. The BMP180's temperature is the enclosure's.
 
 ### I2C bus (software driver)
-* The sensors are driven by a bit-banged I2C master in `link.ino` (namespace `bb`), about 50 kHz, open drain through the internal pull-ups plus the breakouts' own. Every wait has a timeout (20 ms of clock stretching), and each sensor access starts with a bus clear (9 clocks and a STOP).
+* The sensors are driven by a bit-banged I2C master (`link/SoftI2c.h`, tested natively against a simulated device by `test_softi2c.cpp`), about 50 kHz, open drain through the internal pull-ups plus the breakouts' own. Every wait has a timeout (20 ms of clock stretching), and each sensor access starts with a bus clear (9 clocks and a STOP).
 * Reason: the SAMD21 `Wire` driver has no timeouts and locked the board up in `setup()` (Nov 16).
 * The watchdog starts before the first I2C access. SDA and SCL are checked at boot; if either is low, I2C stays off and is re-checked every minute.
 * `!i2c-probe` reports the idle line levels with and without the internal pull-ups, which addresses acknowledge, and a CRC-checked SHT31 status read. `!sht` re-runs the SHT31 setup and one measurement and prints each step.

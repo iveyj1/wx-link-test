@@ -6,8 +6,8 @@ enum Stage : uint32_t {
   ST_RADIO_CONFIG, ST_WAKE_WRITE, ST_WAKE_FLUSH, ST_WAKE_DELAY,
   ST_WAKE_DRAIN, ST_RADIO_WRITE, ST_RADIO_WAIT, ST_USB_LOG,
   ST_CLOCK_SYNC, ST_RTC_IRQ, ST_REED_IRQ, ST_IDLE,
-  ST_SNAPSHOT, ST_SCHEDULE, ST_MANUAL_RESET, ST_UART_COMPLETE, ST_UART_INIT, ST_BARO,
-  ST_LAST = ST_BARO
+  ST_SNAPSHOT, ST_SCHEDULE, ST_MANUAL_RESET, ST_UART_COMPLETE, ST_UART_INIT, ST_I2C,
+  ST_LAST = ST_I2C
 };
 struct TraceRecord {
   uint32_t magic, stage, inverse, parent, sinceMs, session;
@@ -22,7 +22,7 @@ const char *stageName(uint32_t stage) {
   static const char *names[] = {"outside", "setup", "loop", "usb_service", "report",
     "radio_config", "wake_write", "wake_flush", "wake_delay", "wake_drain",
     "radio_write", "radio_wait", "usb_log", "clock_sync", "rtc_irq", "reed_irq",
-    "idle", "snapshot", "schedule", "manual_reset", "uart_complete", "uart_init", "baro"};
+    "idle", "snapshot", "schedule", "manual_reset", "uart_complete", "uart_init", "i2c"};
   return stage <= ST_LAST ? names[stage] : "invalid";
 }
 void traceBegin(uint8_t cause) {

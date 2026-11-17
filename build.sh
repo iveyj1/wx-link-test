@@ -21,5 +21,8 @@ g++ -std=c++11 -Wall -Wextra test_bmp180.cpp -o build/test_bmp180
 build/test_bmp180
 g++ -std=c++11 -Wall -Wextra test_sht31.cpp -o build/test_sht31
 build/test_sht31
-python -m unittest test_monitor
+g++ -std=c++11 -Wall -Wextra test_softi2c.cpp -o build/test_softi2c
+build/test_softi2c
+python -m unittest test_monitor test_web test_reference test_spindown
+node test_display.js
 python test_trace_layout.py

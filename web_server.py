@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 
 import serial
-from monitor import RECEIVER, HZ, UNKNOWN, decode
+from monitor import RECEIVER, HZ, UNKNOWN, decode, VERSIONS as MONITOR_VERSIONS
 import spindown
 
 ROOT = Path(__file__).resolve().parent
@@ -20,7 +20,7 @@ RETENTION = 7 * 86400
 RAIN_RETENTION = 400 * 86400  # rain rows are tiny; keep over a year of daily totals
 GAP = 3600  # no packet for this long is recorded as a data gap
 WEATHER_STEP = 60  # seconds between stored barometer rows (the sensor reads every 30 s)
-VERSIONS = ('W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9')
+VERSIONS = MONITOR_VERSIONS[1:]  # W1 lacks full-revolution data
 # Maintenance windows (takedown, bench tests): data is still recorded, but graphs and rain
 # totals leave out samples whose revolution overlaps a window and tips inside one.
 # end NULL = in progress.
@@ -485,8 +485,8 @@ def handler_for(store):
                     finally:
                         ro.close()
                     kind = 'application/json'
-                elif url.path == '/math.js':
-                    body = (ROOT / 'web' / 'math.js').read_bytes()
+                elif url.path in ('/math.js', '/app.js'):
+                    body = (ROOT / 'web' / url.path[1:]).read_bytes()
                     kind = 'text/javascript; charset=utf-8'
                 elif url.path == '/api/battery':
                     params = parse_qs(url.query)

@@ -43,13 +43,15 @@ regulatory assessment).
 | `link/PulseCounter.h`, `link/TipCounter.h` | Wind and rain reed debounce and counting |
 | `link/ReportSchedule.h` | Report triggering, 1 s cooldown, 5 s backoff, 60 s heartbeat |
 | `link/Bmp180.h`, `link/Sht31.h` | Sensor maths and CRC (no I/O; tested natively) |
+| `link/SoftI2c.h` | Software I2C master with timeouts (no hardware access; tested natively) |
+| `link/Sensors.h`, `link/UsbCommands.h` | Parts of the sketch: sensor services and I2C diagnostics; USB command parser and `!status` |
 | `link/RadioUart.h` | DMA UART transmit to the RYLR998, bounded waits |
 | `link/Diagnostics.h`, `retained.ld` | Execution-stage breadcrumb kept in `.noinit` RAM across resets |
 | `monitor.py` | Packet decoder (W1–W9) and terminal monitor |
 | `web_server.py` | Serial reader, SQLite store, HTTP API, static pages |
 | `maint.py`, `fault.py` | Maintenance windows and purges; per-sensor fault periods (CLI) |
 | `spindown.py`, `spindown_sets.json` | Bearing spin-down analysis |
-| `web/` | Dashboard, reference page, spin-down page (no external JS/CSS) |
+| `web/` | Dashboard (`index.html`, `app.js`, `math.js`), reference page, spin-down page (no external JS/CSS) |
 | `deploy/` | systemd user units |
 | `test_*` | Native C++, Python and JS tests |
 
@@ -58,7 +60,7 @@ regulatory assessment).
 Requires the Arduino CLI with Adafruit SAMD core 1.7.17, `g++`, Python 3 with `pyserial`, and Node.
 
 ```sh
-./build.sh            # compiles both roles into build/{sensor,receiver}, then runs every test
+./build.sh            # compiles both roles into build/{sensor,receiver}, then runs every test (C++, Python, JS)
 CLI=/home/user/pnp/Arduino/arduino-cl/bin/arduino-cli
 $CLI board list       # confirm which ttyACM is which
 $CLI upload -p /dev/ttyACM1 --fqbn adafruit:samd:adafruit_feather_m0 --input-dir build/sensor

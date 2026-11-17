@@ -6,6 +6,7 @@
 #include "RadioUart.h"
 #include "Bmp180.h"
 #include "Sht31.h"
+#include "SoftI2c.h"
 #ifndef SENSOR
 #define SENSOR 1
 #endif
@@ -445,307 +446,20 @@ char *hex64(uint64_t n, char *out) {
 }
 // Battery millivolts: average of 8 12-bit reads, 3.3 V full scale, x2 for the divider.
 // On USB the charger holds this near 4.2 V; it reflects the cell only on battery.
-// ---- Software (bit-banged) I2C master for the sensor bus ----
-// The SAMD21 SERCOM Wire driver locked up in setup() with the SHT31 on the bus (Nov 16; the same
-// SHT31 answers perfectly here), and Wire waits without timeouts. This driver is open drain by
-// switching between INPUT_PULLUP (released) and OUTPUT LOW, runs at ~50 kHz, and every wait for a
-// released line times out (5 ms of clock stretching), so a bad bus costs an error, never a hang.
-namespace bb {
-const uint8_t SDA_ = PIN_WIRE_SDA, SCL_ = PIN_WIRE_SCL;
-bool fault = false; const char *why = "";
-// Clear OUT first: in INPUT_PULLUP the SAMD core leaves OUT = 1, so OUTPUT-then-LOW would drive the
-// line high for a moment, against a device that may be holding it low.
-// Order matters (Nov 16 A/B test): with digitalWrite(LOW) first, the probe saw SCL "held low" at
-// the 3rd address every time; this order works. It drives the line high for a moment when coming
-// from INPUT_PULLUP, which no device here minds.
-void low(uint8_t p) { pinMode(p, OUTPUT); digitalWrite(p, LOW); }
-void rel(uint8_t p) { pinMode(p, INPUT_PULLUP); }
-void half() { delayMicroseconds(10); }
-bool sclHigh() {  // release SCL and wait out clock stretching (up to 20 ms: an SHT31 measurement)
-  rel(SCL_);
-  for (int i = 0; i < 2000; ++i) { if (digitalRead(SCL_)) return true; delayMicroseconds(10); }
-  fault = true; why = "SCL held low (clock stretch timeout)"; return false;
-}
-void start() {
-  rel(SDA_); half(); if (!sclHigh()) return; half();
-  if (!digitalRead(SDA_)) { fault = true; why = "SDA low before START"; return; }
-  low(SDA_); half(); low(SCL_); half();
-}
-void stop() { low(SDA_); half(); sclHigh(); half(); rel(SDA_); half(); }
-bool writeByte(uint8_t v) {  // true = ACK
-  for (int i = 7; i >= 0; --i) {
-    if (v >> i & 1) rel(SDA_); else low(SDA_);
-    half(); if (!sclHigh()) return false; half(); low(SCL_);
-  }
-  rel(SDA_); half(); if (!sclHigh()) return false;
-  const bool ack = !digitalRead(SDA_); half(); low(SCL_);
-  return ack;
-}
-uint8_t readByte(bool ack) {
-  uint8_t v = 0; rel(SDA_);
-  for (int i = 0; i < 8; ++i) { half(); if (!sclHigh()) return 0; v = v << 1 | digitalRead(SDA_); half(); low(SCL_); }
-  if (ack) low(SDA_); half(); sclHigh(); half(); low(SCL_); rel(SDA_);
-  return v;
-}
-// Bus clear (I2C spec 3.1.16): with SDA released, 9 clocks let a device stuck mid-byte finish and
-// see a NACK, then a STOP returns every device to idle. Done before each sensor's access: a reset
-// in the middle of a transaction left the SHT31 out of step (it NACKed until clocked through).
-bool warmed = false;
-void clear() {
-  if (!warmed) {
-    // First use after boot: the pins have just gone from reset (floating, no pull-ups) to
-    // INPUT_PULLUP, and that transition can leave a device out of step. Settle, then send a
-    // throwaway START/STOP before the real bus clear.
-    warmed = true;
-    rel(SDA_); rel(SCL_); delay(2);
-    start(); stop(); delay(1);
-  }
-  rel(SDA_);
-  for (int i = 0; i < 9; ++i) { low(SCL_); half(); if (!sclHigh()) return; half(); }
-  low(SCL_); half(); stop();
-}
-// Whole transactions; false on NACK or bus fault (bb::why says which).
-bool write(uint8_t addr, const uint8_t *d, uint8_t n, bool stopAfter = true) {
-  fault = false; start();
-  bool ok = !fault && writeByte(addr << 1);
-  for (uint8_t i = 0; ok && i < n; ++i) ok = writeByte(d[i]);
-  if (stopAfter || !ok) stop();
-  return ok && !fault;
-}
-bool read(uint8_t addr, uint8_t *d, uint8_t n) {  // also serves as a repeated START after write(.., false)
-  fault = false; start();
-  bool ok = !fault && writeByte(addr << 1 | 1);
-  for (uint8_t i = 0; ok && i < n; ++i) d[i] = readByte(i + 1 < n);
-  stop();
-  return ok && !fault;
-}
-}  // namespace bb
+// ---- Sensor I2C bus: software master (SoftI2c.h) on the SDA/SCL pins ----
+// Open drain by switching between INPUT_PULLUP (released) and OUTPUT LOW.
+struct I2cPins {
+  static uint8_t pin(I2cLine l) { return l == I2cLine::SDA ? PIN_WIRE_SDA : PIN_WIRE_SCL; }
+  // Order under test (plan item F1): this drives the line high for an instant when coming from
+  // INPUT_PULLUP. The reverse order appeared to fail on Nov 16, but with a faulty SHT31 fitted.
+  static void low(I2cLine l) { pinMode(pin(l), OUTPUT); digitalWrite(pin(l), LOW); }
+  static void release(I2cLine l) { pinMode(pin(l), INPUT_PULLUP); }
+  static bool read(I2cLine l) { return digitalRead(pin(l)); }
+  static void delayUs(uint32_t us) { delayMicroseconds(us); }
+};
+SoftI2c<I2cPins> bb;
+#include "Sensors.h"
 
-// ---- BMP180 barometer on I2C (SDA/SCL, 0x77) ----
-// Read at most every BARO_EVERY_MS, inside report(): ~31 ms of delay() while counting continues
-// in interrupts. Absent or failing: fields are sent as 0 and probing is retried every minute.
-// A watchdog reset during an I2C access (stuck bus) disables the barometer until the next boot.
-constexpr uint8_t BMP180_ADDR = 0x77, BMP_OSS = 3; // ultra high resolution: 25.5 ms, ~0.03 hPa rms
-constexpr uint32_t BARO_EVERY_MS = 30000, BARO_RETRY_MS = 60000, BARO_STALE_MS = 300000;
-Bmp180Cal baroCal;
-bool baroOK = false, baroDisabled = false, baroHave = false;
-// Why I2C is off this boot (baroDisabled): set in setup().
-const char *i2cOffReason = "";
-bool i2cOffForBoot = false;  // a reset during I2C: stays off; lines low at boot: re-checked
-// Idle I2C lines must both read high (the breakouts' pull-ups). Checked at boot, with the
-// internal pull-ups as a backstop: a low line means an unpowered sensor (its ESD diodes clamp the
-// bus), a short or a slave stuck mid-byte.
-// A slave holding SDA gets up to 9 SCL pulses to finish its byte. Returns 0 or a reason.
-const char *i2cLinesCheck() {
-  // Continuous input sampling for SDA and SCL. By default the SAMD21 samples a pin on demand,
-  // and a read right after its input is enabled can return a stale 0: at boot this reported
-  // "SDA and SCL held low" on a healthy bus (Nov 16).
-  const PinDescription &da = g_APinDescription[PIN_WIRE_SDA], &cl = g_APinDescription[PIN_WIRE_SCL];
-  PORT->Group[da.ulPort].CTRL.reg |= 1ul << da.ulPin;
-  PORT->Group[cl.ulPort].CTRL.reg |= 1ul << cl.ulPin;
-  pinMode(PIN_WIRE_SDA, INPUT_PULLUP); pinMode(PIN_WIRE_SCL, INPUT_PULLUP);
-  delayMicroseconds(100);
-  for (int i = 0; i < 9 && digitalRead(PIN_WIRE_SCL) && !digitalRead(PIN_WIRE_SDA); ++i) {
-    pinMode(PIN_WIRE_SCL, OUTPUT); digitalWrite(PIN_WIRE_SCL, LOW); delayMicroseconds(10);
-    pinMode(PIN_WIRE_SCL, INPUT_PULLUP); delayMicroseconds(10);
-  }
-  const bool sda = digitalRead(PIN_WIRE_SDA), scl = digitalRead(PIN_WIRE_SCL);
-  if (!sda && !scl) return "SDA and SCL held low";
-  if (!sda) return "SDA held low";
-  if (!scl) return "SCL held low";
-  return nullptr;
-}
-// True when the sensor bus may be used. Lines found low (at boot or since) are re-checked once a
-// minute, so a bus that recovers comes back without a reset.
-uint32_t i2cLinesCheckedMs = 0;
-uint32_t wallMs();
-bool i2cReady(bool force = false) {
-  if (!baroDisabled) return true;
-  if (i2cOffForBoot) return false;
-  const uint32_t ms = wallMs();
-  if (!force && ms - i2cLinesCheckedMs < 60000) return false;
-  i2cLinesCheckedMs = ms;
-  if (const char *lines = i2cLinesCheck()) { i2cOffReason = lines; return false; }
-  baroDisabled = false; i2cOffReason = "";
-  return true;
-}
-int32_t baroDeciC = 0, baroPa = 0;
-uint32_t baroReadMs = 0, baroProbeMs = 0, baroGoodMs = 0, baroErrors = 0;
-bool i2cRead(uint8_t reg, uint8_t *buf, uint8_t n) {
-  return bb::write(BMP180_ADDR, &reg, 1, false) && bb::read(BMP180_ADDR, buf, n);
-}
-bool i2cWrite(uint8_t reg, uint8_t v) {
-  const uint8_t d[2] = {reg, v};
-  return bb::write(BMP180_ADDR, d, 2);
-}
-bool baroBegin() {
-  StageScope stage(ST_BARO);
-  bb::clear();
-  baroProbeMs = wallMs();
-  uint8_t id = 0, e[22];
-  if (!i2cRead(0xD0, &id, 1) || id != 0x55 || !i2cRead(0xAA, e, 22)) return false;
-  auto w = [&](int i) { return uint16_t(e[2*i] << 8 | e[2*i+1]); };
-  baroCal = {int16_t(w(0)), int16_t(w(1)), int16_t(w(2)), w(3), w(4), w(5),
-             int16_t(w(6)), int16_t(w(7)), int16_t(w(8)), int16_t(w(9)), int16_t(w(10))};
-  return baroCal.plausible();
-}
-bool baroRead() {
-  StageScope stage(ST_BARO);
-  bb::clear();
-  uint8_t b[3];
-  if (!i2cWrite(0xF4, 0x2E)) return false;
-  delay(5);
-  if (!i2cRead(0xF6, b, 2)) return false;
-  const int32_t ut = int32_t(b[0]) << 8 | b[1];
-  if (!i2cWrite(0xF4, 0x34 | (BMP_OSS << 6))) return false;
-  delay(26);
-  if (!i2cRead(0xF6, b, 3)) return false;
-  const int32_t up = (int32_t(b[0]) << 16 | int32_t(b[1]) << 8 | b[2]) >> (8 - BMP_OSS);
-  int32_t t, pa;
-  bmp180Compensate(baroCal, ut, up, BMP_OSS, t, pa);
-  if (pa < 30000 || pa > 110000 || t < -500 || t > 850) return false;
-  baroDeciC = t; baroPa = pa;
-  return true;
-}
-void baroService() {
-  if (!i2cReady()) return;
-  const uint32_t ms = wallMs(); // RTC time: millis() stands still in deep standby
-  if (!baroOK) {
-    if (baroProbeMs && ms - baroProbeMs < BARO_RETRY_MS) return;
-    if (!(baroOK = baroBegin())) return;
-    baroReadMs = ms - BARO_EVERY_MS;
-  }
-  if (baroHave && ms - baroReadMs < BARO_EVERY_MS) return;
-  baroReadMs = ms;
-  if (baroRead()) { baroHave = true; baroGoodMs = ms; }
-  else if (++baroErrors, ms - baroGoodMs > BARO_STALE_MS) baroOK = false; // re-probe later
-}
-// ---- SHT31 air temperature and humidity on the same bus (0x44, or 0x45 with ADDR high) ----
-// Same cadence and failure handling as the barometer: single-shot reads every SHT_EVERY_MS
-// (~16 ms of delay()), fields 0 when absent or stale, re-probed every minute, and off for the rest of
-// the boot after a watchdog reset during any I2C access (the stage is shared: ST_BARO).
-constexpr uint32_t SHT_EVERY_MS = 30000;
-uint8_t shtAddr = 0;  // 0 = not found
-bool shtHave = false;
-uint16_t shtDeciK = 0, shtPermille = 0;
-uint32_t shtReadMs = 0, shtProbeMs = 0, shtGoodMs = 0, shtErrors = 0;
-bool shtCommand(uint8_t addr, uint16_t cmd) {
-  const uint8_t d[2] = {uint8_t(cmd >> 8), uint8_t(cmd)};
-  return bb::write(addr, d, 2);
-}
-char shtProbeLog[120] = "never probed";
-bool shtBegin() {
-  StageScope stage(ST_BARO);
-  shtProbeMs = wallMs();
-  static const uint8_t addrs[] = {0x44, 0x45};
-  size_t n = 0; shtProbeLog[0] = 0;
-  bb::clear();
-  for (uint8_t addr : addrs) {
-    uint8_t b[3] = {0, 0, 0};
-    // Put the sensor in a known state whatever it was doing: Break (0x3093) stops periodic
-    // acquisition, then a soft reset (0x30A2, 1.5 ms). Both NACK while a measurement is running,
-    // so try for up to ~60 ms. A garbled command (e.g. from a reset mid-transaction) can leave it
-    // measuring, and it acknowledges nothing while it measures.
-    for (int t = 0; t < 4; ++t) {
-      const bool brk = shtCommand(addr, 0x3093);
-      delay(2);
-      if (shtCommand(addr, 0x30A2) && brk) break;
-      delay(15);
-    }
-    delay(2);
-    const bool cmd = shtCommand(addr, 0xF32D);  // read status
-    const char *w1 = bb::fault ? bb::why : "";
-    bool rd = false;
-    if (cmd) { delayMicroseconds(500); rd = bb::read(addr, b, 3); }
-    const bool crc = rd && sht31Crc(b, 2) == b[2];
-    n += snprintf(shtProbeLog + n, sizeof(shtProbeLog) - n, "0x%02x cmd=%d%s read=%d %02x%02x/%02x crc=%d%s; ",
-                  addr, cmd, w1, rd, b[0], b[1], b[2], crc, rd || !cmd ? "" : bb::why);
-    if (n >= sizeof(shtProbeLog)) n = sizeof(shtProbeLog) - 1;
-    if (crc) { shtAddr = addr; return true; }
-  }
-  shtAddr = 0;
-  return false;
-}
-bool shtRead() {
-  StageScope stage(ST_BARO);
-  bb::clear();
-  uint8_t b[6] = {0, 0, 0, 0, 0, 0};
-  // Single shot, high repeatability, no clock stretching; one retry if it is busy (NACK).
-  // The result is polled: the read header is NACKed until the measurement is done (15.5 ms max
-  // for a genuine SHT31; this one (Nov 16) was still busy after 108 ms), so try every 10 ms for
-  // up to 1.5 s and log how long it took. Counting continues in interrupts meanwhile.
-  const uint32_t t0 = millis();
-  if (!shtCommand(shtAddr, 0x2400) && (delay(16), !shtCommand(shtAddr, 0x2400))) {
-    snprintf(shtProbeLog, sizeof(shtProbeLog), "read: command NACK%s%s", bb::fault ? " " : "", bb::fault ? bb::why : "");
-    return false;
-  }
-  delay(10);
-  bool rd = false;
-  for (int i = 0; i < 150 && !(rd = bb::read(shtAddr, b, 6)); ++i) { delay(10); wdtKick(); }
-  const bool ok = rd && sht31Decode(b, shtDeciK, shtPermille);
-  snprintf(shtProbeLog, sizeof(shtProbeLog), "read: %s after %lu ms, %02x%02x/%02x %02x%02x/%02x%s%s",
-           !rd ? "no data (NACK)" : ok ? "ok" : "CRC error", (unsigned long)(millis() - t0),
-           b[0], b[1], b[2], b[3], b[4], b[5], bb::fault ? " " : "", bb::fault ? bb::why : "");
-  return ok;
-}
-void shtService() {
-  if (!i2cReady()) return;
-  const uint32_t ms = wallMs();
-  if (!shtAddr) {
-    if (shtProbeMs && ms - shtProbeMs < BARO_RETRY_MS) return;
-    if (!shtBegin()) return;
-    shtReadMs = ms - SHT_EVERY_MS;
-  }
-  if (shtHave && ms - shtReadMs < SHT_EVERY_MS) return;
-  shtReadMs = ms;
-  if (shtRead()) { shtHave = true; shtGoodMs = ms; }
-  else if (++shtErrors, ms - shtGoodMs > BARO_STALE_MS) shtAddr = 0; // re-probe later
-}
-void i2cProbe() {
-  StageScope stage(ST_BARO);
-  char msg[160];
-  const bool sda = (pinMode(PIN_WIRE_SDA, INPUT_PULLUP), digitalRead(PIN_WIRE_SDA));
-  const bool scl = (pinMode(PIN_WIRE_SCL, INPUT_PULLUP), digitalRead(PIN_WIRE_SCL));
-  // Without the internal pull-ups: do the breakouts pull the lines up themselves?
-  pinMode(PIN_WIRE_SDA, INPUT); pinMode(PIN_WIRE_SCL, INPUT); delayMicroseconds(200);
-  const bool sdaExt = digitalRead(PIN_WIRE_SDA), sclExt = digitalRead(PIN_WIRE_SCL);
-  snprintf(msg, sizeof(msg), "# i2c-probe idle: SDA=%d SCL=%d (internal pull-ups on); external pull-ups only: SDA=%d SCL=%d",
-           sda, scl, sdaExt, sclExt);
-  logLine(msg);
-  for (uint8_t a = 1; a < 127; ++a) {
-    bb::fault = false;
-    bb::start(); const bool ack = !bb::fault && bb::writeByte(a << 1); bb::stop();
-    if (bb::fault) { snprintf(msg, sizeof(msg), "# i2c-probe 0x%02x: FAULT %s", a, bb::why); logLine(msg); break; }
-    if (ack) { snprintf(msg, sizeof(msg), "# i2c-probe 0x%02x: ACK", a); logLine(msg); }
-    wdtKick();
-  }
-  // SHT31 status register (0xF32D), CRC checked: proves full two-way communication.
-  static const uint8_t shtAddrs[] = {0x44, 0x45};
-  for (uint8_t a : shtAddrs) {
-    bb::fault = false;
-    bb::start(); bool ok = bb::writeByte(a << 1) && bb::writeByte(0xF3) && bb::writeByte(0x2D); bb::stop();
-    if (!ok || bb::fault) continue;
-    delayMicroseconds(500);
-    bb::start(); ok = bb::writeByte(a << 1 | 1);
-    uint8_t b[3] = {0, 0, 0};
-    if (ok) { b[0] = bb::readByte(true); b[1] = bb::readByte(true); b[2] = bb::readByte(false); }
-    bb::stop();
-    snprintf(msg, sizeof(msg), "# i2c-probe SHT31 0x%02x status %02x%02x crc %02x %s%s", a, b[0], b[1], b[2],
-             ok && sht31Crc(b, 2) == b[2] ? "OK" : "BAD", bb::fault ? bb::why : "");
-    logLine(msg);
-  }
-  bb::rel(PIN_WIRE_SDA); bb::rel(PIN_WIRE_SCL);
-}
-void i2cScan() {
-  StageScope stage(ST_BARO);
-  char msg[200] = "# i2c devices:"; size_t n = strlen(msg);
-  for (uint8_t a = 1; a < 127; ++a) {
-    if (bb::write(a, nullptr, 0) && n + 6 < sizeof(msg)) n += snprintf(msg + n, sizeof(msg) - n, " 0x%02x", a);
-    wdtKick();
-  }
-  if (n == strlen("# i2c devices:")) strcat(msg, " none");
-  logLine(msg);
-}
 uint32_t readVbatMv() {
   uint32_t sum = 0;
   for (unsigned i = 0; i < 8; ++i) sum += analogRead(VBAT);
@@ -907,13 +621,13 @@ void setup() {
   if (SENSOR) {
     // A reset (watchdog or button) inside an I2C access means a stuck bus: leave I2C off this boot.
     const char *lines = i2cLinesCheck();
-    if (previousTraceValid && previousTrace.stage == ST_BARO) { i2cOffReason = "reset during I2C last boot"; i2cOffForBoot = true; }
+    if (previousTraceValid && previousTrace.stage == ST_I2C) { i2cOffReason = "reset during I2C last boot"; i2cOffForBoot = true; }
     else if (lines) { i2cOffReason = lines; i2cLinesCheckedMs = wallMs(); }
-    baroDisabled = *i2cOffReason != 0;
+    i2cOff = *i2cOffReason != 0;
     // Sensors are first probed at the first report (after the start-up delay and the USB check,
     // > 1.5 s), not here: accesses within milliseconds of reset failed on Nov 16.
     char msg[96];
-    snprintf(msg, sizeof(msg), "# i2c %s%s", baroDisabled ? "OFF this boot: " : "bus idle high, ", baroDisabled ? i2cOffReason : "ok");
+    snprintf(msg, sizeof(msg), "# i2c %s%s", i2cOff ? "OFF this boot: " : "bus idle high, ", i2cOff ? i2cOffReason : "ok");
     logLine(msg);
   }
   delay(1500);
@@ -934,129 +648,7 @@ void setup() {
   debounceArm();
   interrupts();
 }
-void serviceUsb() {
-  StageScope stage(ST_USB_SERVICE);
-  static char input[32]; static unsigned used = 0;
-  while (Serial.available()) {
-    char ch = Serial.read();
-    if (ch == '\r') continue;
-    if (ch == '\n') {
-      input[used] = 0; used = 0;
-      if (!strcmp(input,"!report") && SENSOR) {
-        forceReport = true; reportDue = true;
-      } else if (!strcmp(input,"!standby-test") && SENSOR) {
-        logLine(deepSleep ? "# deep standby is active" : "# light sleep: a USB host was seen this session; unplug USB and reset to use deep standby");
-      } else if (!strcmp(input,"!uart-test") && SENSOR) {
-        // Simulate a missing TX-complete indication on the next wake command.
-        radioUart.injectCompletionTimeout = true;
-        forceReport = true; reportDue = true;
-        logLine("# injecting one UART completion timeout; automatic retry expected in 5 s");
-      } else if (!strcmp(input,"!xosc-test") || (!strcmp(input,"!xosc-test deep") && SENSOR)) {
-        // Simulate a stopped crystal for 90 s (also removes the DFLL reference, as a real stop
-        // does). "deep" forces deep standby and detaches USB until the crystal is restored
-        // (the next crystal retry, up to ~10 min after failover); read !status then.
-        testForcesDeep = input[10] == ' ';
-        if (testForcesDeep) {
-          logLine("# xosc-test deep: USB detaching; crystal off 90 s in deep standby; USB returns after the crystal is restored (up to ~11 min)");
-          Serial.flush(); delay(50);
-          USBDevice.detach(); usbLive = false; usbDetachedForTest = true;
-          usbSeen = false; updateSleepMode();
-        } else logLine("# xosc-test: crystal oscillator disabled for 90 s; expect failover within ~8 s");
-        xoscTestUntil = wallMs() + 90000; // while the RTC still runs
-        SYSCTRL->XOSC32K.bit.ENABLE = 0;
-      } else if (!strcmp(input,"!clock-retry")) {
-        lastCrystalTryMs = wallMs() - CRYSTAL_RETRY_MS;
-        logLine("# crystal retry requested");
-      } else if (!strcmp(input,"!diag-reset")) {
-        // Explicit diagnostic retention test only; never invoked automatically.
-        traceStage(ST_MANUAL_RESET);
-        NVIC_SystemReset();
-      } else if (!strcmp(input,"!status")) {
-        char c[21], r[21], p[21], msg[160];
-        noInterrupts();
-        uint64_t n = pulses.count, rev = pulses.revolutions, t = pulses.revolutionPeriod, e = rawEdges;
-        interrupts();
-        char re[21];
-        decimal64(n,c); decimal64(rev,r); decimal64(t,p); decimal64(e,re);
-        snprintf(msg,sizeof(msg),"# %s " FIRMWARE " radio=%s pin5=%d pulses=%s revolutions=%s rev_period_ticks=%s raw_edges=%s",
-                 SENSOR ? "sensor" : "receiver",radioOK ? "OK" : "ERROR",digitalRead(REED),c,r,p,re);
-        logLine(msg);
-        noInterrupts();
-        uint64_t tipsNow = rain.tips, tipEdgesNow = rainRawEdges;
-        interrupts();
-        decimal64(tipsNow,c); decimal64(tipEdgesNow,re);
-        snprintf(msg,sizeof(msg),"# rain D10=%d tips=%s raw_edges=%s (1 tip per debounced closure; clean = 2 edges per tip) vbat=%lu mV",
-                 digitalRead(RAIN),c,re,(unsigned long)readVbatMv());
-        logLine(msg);
-        snprintf(msg,sizeof(msg),"# baro BMP180 %s pressure=%ld Pa temp=%s%ld.%ld C errors=%lu last_good_ms_ago=%lu",
-                 baroDisabled ? "OFF" : baroOK ? "OK" : "absent",(long)baroPa,baroDeciC < 0 ? "-" : "",
-                 (long)(abs(baroDeciC)/10),(long)(abs(baroDeciC)%10),(unsigned long)baroErrors,(unsigned long)(baroHave ? wallMs()-baroGoodMs : 0));
-        logLine(msg);
-        {
-          const int32_t dc = int32_t(shtDeciK) - 2732;
-          snprintf(msg,sizeof(msg),"# air SHT31 %s addr=0x%02x temp=%s%ld.%ld C rh=%u.%u %% errors=%lu last_good_ms_ago=%lu",
-                   baroDisabled ? "OFF" : shtAddr ? "OK" : "absent",shtAddr,dc < 0 ? "-" : "",
-                   (long)(abs(dc)/10),(long)(abs(dc)%10),shtPermille/10,shtPermille%10,(unsigned long)shtErrors,
-                   (unsigned long)(shtHave ? wallMs()-shtGoodMs : 0));
-          logLine(msg);
-        }
-        if (baroDisabled) { snprintf(msg,sizeof(msg),"# i2c OFF this boot: %s",i2cOffReason); logLine(msg); }
-        snprintf(msg,sizeof(msg),"# fw=" FIRMWARE " session=%08lx reset=0x%02x sleepprm=%u standby=%lu/%lu tx_ok=%lu tx_fail=%lu",
-                 (unsigned long)session,resetCause,(unsigned)NVMCTRL->CTRLB.bit.SLEEPPRM,
-                 (unsigned long)standbyEntries,(unsigned long)standbyReturns,
-                 (unsigned long)txOK,(unsigned long)txFailed);
-        logLine(msg);
-        char diag[256], cmd[72];
-        for (unsigned i=0; i<sizeof(cmd); ++i) cmd[i] = traceRecord.command[i];
-        cmd[sizeof(cmd)-1] = 0;
-        snprintf(diag,sizeof(diag),"# sleep=%s wdt_early=%lu stage=%s parent=%s since_ms=%lu last_command=%s",
-                 deepSleep ? "deep" : "light",(unsigned long)wdtEarlyWakes,stageName(traceRecord.stage),stageName(traceRecord.parent),(unsigned long)traceRecord.sinceMs,cmd);
-        logLine(diag);
-        snprintf(diag,sizeof(diag),"# uart_ready=%u baud=%lu timeouts=%lu recoveries=%lu last_fault=%s injected=%u flags=0x%02lx status=0x%04lx ctrla=0x%08lx sync=0x%08lx",
-                 radioUart.ready,(unsigned long)radioUart.baud,(unsigned long)radioUart.timeouts,
-                 (unsigned long)radioUart.recoveries,radioUart.lastFault,radioUart.lastInjected,
-                 (unsigned long)radioUart.lastFlags,(unsigned long)radioUart.lastStatus,
-                 (unsigned long)radioUart.lastCtrlA,(unsigned long)radioUart.lastSync);
-        logLine(diag);
-        snprintf(diag,sizeof(diag),"# tx_dma_timeouts=%lu txc_inferred=%lu rtc_sync_timeouts=%lu compare_rearms=%lu radio_resets=%lu consecutive_fails=%lu wdt=16s",
-                 (unsigned long)radioUart.dmaTimeouts,(unsigned long)radioUart.inferredCompletions,(unsigned long)rtcSyncTimeouts,
-                 (unsigned long)compareRearms,(unsigned long)radioResets,(unsigned long)consecutiveFails);
-        logLine(diag);
-        snprintf(diag,sizeof(diag),"# clock=%s rtc_stuck=%u failovers=%lu restores=%lu stall_rearms=%lu lost_ms=%lu since_rtc_irq_ms=%lu",
-                 onInternalClock ? "internal" : "crystal",(unsigned)rtcStuck,(unsigned long)clockFailovers,
-                 (unsigned long)clockRestores,(unsigned long)rtcStallRearms,(unsigned long)clockLostMs,
-                 (unsigned long)(millis() - lastRtcIrqMs));
-        logLine(diag);
-        if (previousTraceValid) {
-          snprintf(diag,sizeof(diag),"# previous_trace session=%08lx stage=%s parent=%s since_ms=%lu command=%s",
-                   (unsigned long)previousTrace.session,stageName(previousTrace.stage),stageName(previousTrace.parent),
-                   (unsigned long)previousTrace.sinceMs,previousTrace.command);
-          logLine(diag);
-        } else logLine("# previous_trace unavailable (power loss, overwrite, or first diagnostic boot)");
-      } else if (!strcmp(input,"!i2c-scan") && SENSOR) {
-        if (baroDisabled) {
-          char msg[120]; snprintf(msg, sizeof(msg), "# i2c OFF this boot: %s; fix the wiring and reset (or try !i2c-probe)", i2cOffReason);
-          logLine(msg);
-        }
-        else i2cScan();
-      } else if (!strcmp(input,"!sht") && SENSOR) {
-        char msg[160];
-        snprintf(msg, sizeof(msg), "# sht last probe: %s", shtProbeLog); logLine(msg);
-        const bool ok = i2cReady(true) && shtBegin();
-        snprintf(msg, sizeof(msg), "# sht probe now: %s -> %s", shtProbeLog, ok ? "found" : "absent"); logLine(msg);
-        if (ok) {
-          const bool rd = shtRead();
-          if (rd) { shtHave = true; shtGoodMs = shtReadMs = wallMs(); } else ++shtErrors;
-          snprintf(msg, sizeof(msg), "# sht %s", shtProbeLog); logLine(msg);
-        }
-      } else if (!strcmp(input,"!i2c-probe") && SENSOR) {
-        i2cProbe();
-      } else if (!strcmp(input,"!led on")) digitalWrite(LED_BUILTIN,HIGH);
-      else if (!strcmp(input,"!led off")) digitalWrite(LED_BUILTIN,LOW);
-    } else if (used < sizeof(input)-1) input[used++] = ch;
-    else used = 0;
-  }
-}
+#include "UsbCommands.h"
 void loop() {
   StageScope stage(ST_LOOP);
   wdtKick();
