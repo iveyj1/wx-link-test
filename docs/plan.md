@@ -46,7 +46,7 @@ Done on Nov 17 (05:00-05:40):
    even with the 1 s detach. It re-enumerates after the port is opened and closed. A board in deep standby can't
    answer then. Fix: hold light sleep for 3 minutes after a software reset (`SYST_LIGHT_MS`); the detach was
    removed. Over 22 resets the port came back after 1-9 pokes (3.5 s to 2.5 min). Nov 17 evening: on a PC port (internal Genesys 05e3:0608 hub, 1-11.4) every `!diag-reset`
-   (5/5) was seen at once and re-enumerated in 0.77 s with no poke. **The VIA hub is the cause: keep the sensor
+   (5/5) was seen at once and re-enumerated in 0.77 s with no poke; same on a root port (1-8, no hub), 5/5 in 0.78 s. **The VIA hub is the cause: keep the sensor
    off it.** The light-sleep hold stays as a cheap safeguard.
 7. (Done) Final build flashed 05:33 (session bb3ed4fa), 11/11 packets in 10 minutes, tagged `feather-m0-w9`.
 
