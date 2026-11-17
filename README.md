@@ -50,6 +50,7 @@ regulatory assessment).
 | `monitor.py` | Packet decoder (W1–W9) and terminal monitor |
 | `web_server.py` | Serial reader, SQLite store, HTTP API, static pages |
 | `maint.py`, `fault.py` | Maintenance windows and purges; per-sensor fault periods (CLI) |
+| `backup.py` | Consistent nightly copy of the database |
 | `spindown.py`, `spindown_sets.json` | Bearing spin-down analysis |
 | `web/` | Dashboard (`index.html`, `app.js`, `math.js`), reference page, spin-down page (no external JS/CSS) |
 | `deploy/` | systemd user units |
@@ -84,12 +85,14 @@ $CLI upload -p /dev/ttyACM0 --fqbn adafruit:samd:adafruit_feather_m0 --input-dir
 ## Dashboard service
 
 ```sh
-cp deploy/anemometer-web.service ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now anemometer-web
+cp deploy/anemometer-*.service deploy/anemometer-*.timer ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now anemometer-web anemometer-backup.timer
 journalctl --user -u anemometer-web -f
 ```
 
-Serves `http://<host>:8765/` on all interfaces, **without authentication or TLS**, read-only except starting/stopping maintenance: trusted LAN only. The service owns the receiver port; stop it before running `python monitor.py`. History is in `data/wind.sqlite3` (not in git):
+Serves `http://<host>:8765/` on all interfaces, **without authentication or TLS**, read-only except starting/stopping maintenance: trusted LAN only. The service owns the receiver port; stop it before running `python monitor.py`. History is in `data/wind.sqlite3` (not in git). `backup.py`, run nightly at 03:30 by `anemometer-backup.timer`, writes a consistent copy to `data/backups/nightly/` and keeps 14. `/api/hourly?start=&end=` returns the long-term hourly summary.
+
+Tables:
 
 | Table | Contents | Retention |
 |---|---|---|
@@ -100,6 +103,7 @@ Serves `http://<host>:8765/` on all interfaces, **without authentication or TLS*
 | `gaps` | Stretches of more than 1 h without packets | 400 days |
 | `weather` | Pressure (Pa) and enclosure temperature, at most one row per minute (W7) | 400 days |
 | `climate` | SHT31 air temperature and relative humidity, at most one row per minute (W9) | 400 days |
+| `hourly` | Per clock hour: packets received and missed, sessions, battery mean/min/max, RSSI and SNR mean/min, packets sent in deep standby. Filled from `packets` before they are pruned | 400 days |
 | `maintenance` | Maintenance windows (start, end or NULL while open, note) | kept |
 | `faults` | Sensor faults (sensor wind/rain/baro/air, start, end or NULL while open, note) | kept |
 | `state` | Latest decoded packet | — |
