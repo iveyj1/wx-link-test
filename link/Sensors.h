@@ -6,14 +6,18 @@
 // ---- BMP180 barometer on I2C (SDA/SCL, 0x77) ----
 // Read at most every BARO_EVERY_MS, inside report(): ~31 ms of delay() while counting continues
 // in interrupts. Absent or failing: fields are sent as 0 and probing is retried every minute.
-// A watchdog reset during an I2C access (stuck bus) disables the barometer until the next boot.
+// A reset during an I2C access (stuck bus) turns the bus off for I2C_RESET_RETRY_MS (i2cReady()).
 constexpr uint8_t BMP180_ADDR = 0x77, BMP_OSS = 3; // ultra high resolution: 25.5 ms, ~0.03 hPa rms
 constexpr uint32_t BARO_EVERY_MS = 30000, BARO_RETRY_MS = 60000, BARO_STALE_MS = 300000;
 Bmp180Cal baroCal;
 bool baroOK = false, i2cOff = false, baroHave = false;
 // Why I2C is off this boot (i2cOff): set in setup().
 const char *i2cOffReason = "";
-bool i2cOffForBoot = false;  // a reset during I2C: stays off; lines low at boot: re-checked
+// I2C off is retried by i2cReady(): after a minute when lines read low, after 10 minutes when the
+// last boot ended in a reset during an I2C access (a slower retry, so a bus that hangs the
+// software master despite its timeouts costs one reset per 10 minutes, not one per minute).
+constexpr uint32_t I2C_LINES_RETRY_MS = 60000, I2C_RESET_RETRY_MS = 600000;
+uint32_t i2cRetryMs = I2C_LINES_RETRY_MS;
 // Idle I2C lines must both read high (the breakouts' pull-ups). Checked at boot, with the
 // internal pull-ups as a backstop: a low line means an unpowered sensor (its ESD diodes clamp the
 // bus), a short or a slave stuck mid-byte.
@@ -37,15 +41,15 @@ const char *i2cLinesCheck() {
   if (!scl) return "SCL held low";
   return nullptr;
 }
-// True when the sensor bus may be used. Lines found low (at boot or since) are re-checked once a
-// minute, so a bus that recovers comes back without a reset.
+// True when the sensor bus may be used. While off, the lines are re-checked every i2cRetryMs, so a
+// bus that recovers comes back without a reset.
 uint32_t i2cLinesCheckedMs = 0;
 bool i2cReady(bool force = false) {
   if (!i2cOff) return true;
-  if (i2cOffForBoot) return false;
   const uint32_t ms = wallMs();
-  if (!force && ms - i2cLinesCheckedMs < 60000) return false;
+  if (!force && ms - i2cLinesCheckedMs < i2cRetryMs) return false;
   i2cLinesCheckedMs = ms;
+  i2cRetryMs = I2C_LINES_RETRY_MS;
   if (const char *lines = i2cLinesCheck()) { i2cOffReason = lines; return false; }
   i2cOff = false; i2cOffReason = "";
   return true;
@@ -103,46 +107,59 @@ void baroService() {
 }
 // ---- SHT31 air temperature and humidity on the same bus (0x44, or 0x45 with ADDR high) ----
 // Same cadence and failure handling as the barometer: single-shot reads every SHT_EVERY_MS
-// (~16 ms of delay()), fields 0 when absent or stale, re-probed every minute, and off for the rest of
-// the boot after a watchdog reset during any I2C access (the stage is shared: ST_I2C).
+// (~16 ms of delay()), fields 0 when absent or stale, re-probed every minute (also after 3 failed
+// reads in a row), and off for 10 minutes after a reset during any I2C access (the stage is
+// shared: ST_I2C).
 constexpr uint32_t SHT_EVERY_MS = 30000;
+constexpr uint8_t SHT_FAILS_TO_PROBE = 3;
 uint8_t shtAddr = 0;  // 0 = not found
 bool shtHave = false;
 uint16_t shtDeciK = 0, shtPermille = 0;
 uint32_t shtReadMs = 0, shtProbeMs = 0, shtGoodMs = 0, shtErrors = 0;
+uint8_t shtFailsInRow = 0;
 bool shtCommand(uint8_t addr, uint16_t cmd) {
   const uint8_t d[2] = {uint8_t(cmd >> 8), uint8_t(cmd)};
   return bb.write(addr, d, 2);
 }
 char shtProbeLog[120] = "never probed";
+// Status register (0xF32D) with its CRC checked: proves two-way communication. Logs into shtProbeLog.
+bool shtStatus(uint8_t addr, size_t &n, const char *tag) {
+  uint8_t b[3] = {0, 0, 0};
+  const bool cmd = shtCommand(addr, 0xF32D);
+  const char *w1 = bb.fault ? bb.why : "";
+  bool rd = false;
+  if (cmd) { delayMicroseconds(500); rd = bb.read(addr, b, 3); }
+  const bool crc = rd && sht31Crc(b, 2) == b[2];
+  n += snprintf(shtProbeLog + n, sizeof(shtProbeLog) - n, "0x%02x%s cmd=%d%s read=%d %02x%02x/%02x crc=%d%s; ",
+                addr, tag, cmd, w1, rd, b[0], b[1], b[2], crc, rd || !cmd ? "" : bb.why);
+  if (n >= sizeof(shtProbeLog)) n = sizeof(shtProbeLog) - 1;
+  return crc;
+}
 bool shtBegin() {
   StageScope stage(ST_I2C);
   shtProbeMs = wallMs();
+  shtFailsInRow = 0;
   static const uint8_t addrs[] = {0x44, 0x45};
   size_t n = 0; shtProbeLog[0] = 0;
   bb.clear();
   for (uint8_t addr : addrs) {
-    uint8_t b[3] = {0, 0, 0};
-    // Put the sensor in a known state whatever it was doing: Break (0x3093) stops periodic
-    // acquisition, then a soft reset (0x30A2, 1.5 ms). Both NACK while a measurement is running,
-    // so try for up to ~60 ms. A garbled command (e.g. from a reset mid-transaction) can leave it
-    // measuring, and it acknowledges nothing while it measures.
+    if (shtStatus(addr, n, "")) { shtAddr = addr; return true; }
+    // No valid status: put the sensor in a known state whatever it was doing, then ask again.
+    // Break (0x3093) stops periodic acquisition, then a soft reset (0x30A2, 1.5 ms). Both NACK
+    // while a measurement is running, so try for up to ~60 ms. A garbled command (e.g. from a
+    // reset mid-transaction) can leave it measuring, and it acknowledges nothing while it measures.
+    bool any = false;
     for (int t = 0; t < 4; ++t) {
       const bool brk = shtCommand(addr, 0x3093);
       delay(2);
-      if (shtCommand(addr, 0x30A2) && brk) break;
+      const bool rst = shtCommand(addr, 0x30A2);
+      any |= brk || rst;
+      if (brk && rst) break;
       delay(15);
     }
+    if (!any) continue;  // nothing answers at this address
     delay(2);
-    const bool cmd = shtCommand(addr, 0xF32D);  // read status
-    const char *w1 = bb.fault ? bb.why : "";
-    bool rd = false;
-    if (cmd) { delayMicroseconds(500); rd = bb.read(addr, b, 3); }
-    const bool crc = rd && sht31Crc(b, 2) == b[2];
-    n += snprintf(shtProbeLog + n, sizeof(shtProbeLog) - n, "0x%02x cmd=%d%s read=%d %02x%02x/%02x crc=%d%s; ",
-                  addr, cmd, w1, rd, b[0], b[1], b[2], crc, rd || !cmd ? "" : bb.why);
-    if (n >= sizeof(shtProbeLog)) n = sizeof(shtProbeLog) - 1;
-    if (crc) { shtAddr = addr; return true; }
+    if (shtStatus(addr, n, " after reset")) { shtAddr = addr; return true; }
   }
   shtAddr = 0;
   return false;
@@ -153,8 +170,9 @@ bool shtRead() {
   uint8_t b[6] = {0, 0, 0, 0, 0, 0};
   // Single shot, high repeatability, no clock stretching; one retry if it is busy (NACK).
   // The result is polled: the read header is NACKed until the measurement is done (15.5 ms max
-  // for a genuine SHT31; this one (Nov 16) was still busy after 108 ms), so try every 10 ms for
-  // up to 1.5 s and log how long it took. Counting continues in interrupts meanwhile.
+  // for a genuine SHT31), so try every 10 ms for up to ~110 ms and log how long it took. (A faulty
+  // part on Nov 16 never finished; polling it for 1.5 s only cost time.) Counting continues in
+  // interrupts meanwhile.
   const uint32_t t0 = millis();
   if (!shtCommand(shtAddr, 0x2400) && (delay(16), !shtCommand(shtAddr, 0x2400))) {
     snprintf(shtProbeLog, sizeof(shtProbeLog), "read: command NACK%s%s", bb.fault ? " " : "", bb.fault ? bb.why : "");
@@ -162,7 +180,7 @@ bool shtRead() {
   }
   delay(10);
   bool rd = false;
-  for (int i = 0; i < 150 && !(rd = bb.read(shtAddr, b, 6)); ++i) { delay(10); wdtKick(); }
+  for (int i = 0; i < 10 && !(rd = bb.read(shtAddr, b, 6)); ++i) delay(10);
   const bool ok = rd && sht31Decode(b, shtDeciK, shtPermille);
   snprintf(shtProbeLog, sizeof(shtProbeLog), "read: %s after %lu ms, %02x%02x/%02x %02x%02x/%02x%s%s",
            !rd ? "no data (NACK)" : ok ? "ok" : "CRC error", (unsigned long)(millis() - t0),
@@ -179,8 +197,8 @@ void shtService() {
   }
   if (shtHave && ms - shtReadMs < SHT_EVERY_MS) return;
   shtReadMs = ms;
-  if (shtRead()) { shtHave = true; shtGoodMs = ms; }
-  else if (++shtErrors, ms - shtGoodMs > BARO_STALE_MS) shtAddr = 0; // re-probe later
+  if (shtRead()) { shtHave = true; shtGoodMs = ms; shtFailsInRow = 0; }
+  else if (++shtErrors, ++shtFailsInRow >= SHT_FAILS_TO_PROBE || ms - shtGoodMs > BARO_STALE_MS) shtAddr = 0; // re-probe later
 }
 void i2cProbe() {
   StageScope stage(ST_I2C);

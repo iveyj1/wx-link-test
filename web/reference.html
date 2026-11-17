@@ -225,8 +225,11 @@ two closures per turn need not be evenly spaced, because A + B is always a full 
 board with a faulty sensor (Nov 16). Every wait times out (20 ms of clock stretching), and each sensor access starts with a bus clear
 (9 clocks and a STOP). SDA and SCL are checked at boot; if either is low, I2C stays off and is re-checked every minute. Sensors are
 first probed at the first report, not in the first milliseconds after reset.</p>
-<p>Counting carries on in interrupts during the delays. A watchdog reset that happens during any I2C access is taken as a stuck bus: both I2C
-sensors stay off until the next boot, and they report 0.</p>
+<p>Counting carries on in interrupts during the delays. A reset that happens during any I2C access is taken as a stuck bus: both I2C
+sensors start off, report 0, and the bus is re-checked after 10 minutes. The SHT31 is re-probed after 3 failed reads in a row; its
+result is polled for up to ~110 ms (a genuine part needs 15.5 ms). The probe reads the status register first and sends Break and soft
+reset only if that fails.</p>
+<p>After a software reset (a flash or <code>!diag-reset</code>) the sensor holds light sleep for 3 minutes. This host often does not notice the reset; opening and closing the port makes it re-enumerate.</p>
 <h3>Power modes and watchdog</h3>
 <ul>
 <li><b>Deep standby</b> (battery): CPU, 48 MHz clock and SysTick stop; the RTC, reed interrupts and watchdog run and wake it.</li>

@@ -67,7 +67,7 @@ void serviceUsb() {
                    (unsigned long)(shtHave ? wallMs()-shtGoodMs : 0));
           logLine(msg);
         }
-        if (i2cOff) { snprintf(msg,sizeof(msg),"# i2c OFF this boot: %s",i2cOffReason); logLine(msg); }
+        if (i2cOff) { snprintf(msg,sizeof(msg),"# i2c OFF (re-checked every %lu s): %s",(unsigned long)(i2cRetryMs/1000),i2cOffReason); logLine(msg); }
         snprintf(msg,sizeof(msg),"# fw=" FIRMWARE " session=%08lx reset=0x%02x sleepprm=%u standby=%lu/%lu tx_ok=%lu tx_fail=%lu",
                  (unsigned long)session,resetCause,(unsigned)NVMCTRL->CTRLB.bit.SLEEPPRM,
                  (unsigned long)standbyEntries,(unsigned long)standbyReturns,
@@ -102,7 +102,7 @@ void serviceUsb() {
         } else logLine("# previous_trace unavailable (power loss, overwrite, or first diagnostic boot)");
       } else if (!strcmp(input,"!i2c-scan") && SENSOR) {
         if (i2cOff) {
-          char msg[120]; snprintf(msg, sizeof(msg), "# i2c OFF this boot: %s; fix the wiring and reset (or try !i2c-probe)", i2cOffReason);
+          char msg[120]; snprintf(msg, sizeof(msg), "# i2c OFF: %s; fix the wiring (re-checked automatically) or try !i2c-probe", i2cOffReason);
           logLine(msg);
         }
         else i2cScan();

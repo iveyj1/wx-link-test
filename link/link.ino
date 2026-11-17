@@ -444,22 +444,29 @@ char *hex64(uint64_t n, char *out) {
   while (i) *out++ = temp[--i];
   return out;
 }
-// Battery millivolts: average of 8 12-bit reads, 3.3 V full scale, x2 for the divider.
-// On USB the charger holds this near 4.2 V; it reflects the cell only on battery.
 // ---- Sensor I2C bus: software master (SoftI2c.h) on the SDA/SCL pins ----
-// Open drain by switching between INPUT_PULLUP (released) and OUTPUT LOW.
+// Open drain with direct port writes. Low: OUT=0 first, then output, so the pin never drives
+// high. Released: input first, then pull-up (OUT=1 selects pull-up when PULLEN is set). The
+// input buffer stays enabled throughout (continuous sampling is set in i2cLinesCheck()).
+// pinMode(OUTPUT) then digitalWrite(LOW) drove the line high for an instant (plan item F1).
 struct I2cPins {
-  static uint8_t pin(I2cLine l) { return l == I2cLine::SDA ? PIN_WIRE_SDA : PIN_WIRE_SCL; }
-  // Order under test (plan item F1): this drives the line high for an instant when coming from
-  // INPUT_PULLUP. The reverse order appeared to fail on Nov 16, but with a faulty SHT31 fitted.
-  static void low(I2cLine l) { pinMode(pin(l), OUTPUT); digitalWrite(pin(l), LOW); }
-  static void release(I2cLine l) { pinMode(pin(l), INPUT_PULLUP); }
-  static bool read(I2cLine l) { return digitalRead(pin(l)); }
+  static const PinDescription &pd(I2cLine l) { return g_APinDescription[l == I2cLine::SDA ? PIN_WIRE_SDA : PIN_WIRE_SCL]; }
+  static void low(I2cLine l) {
+    const PinDescription &p = pd(l); PortGroup &g = PORT->Group[p.ulPort]; const uint32_t m = 1ul << p.ulPin;
+    g.OUTCLR.reg = m; g.PINCFG[p.ulPin].reg = PORT_PINCFG_INEN; g.DIRSET.reg = m;
+  }
+  static void release(I2cLine l) {
+    const PinDescription &p = pd(l); PortGroup &g = PORT->Group[p.ulPort]; const uint32_t m = 1ul << p.ulPin;
+    g.DIRCLR.reg = m; g.PINCFG[p.ulPin].reg = PORT_PINCFG_INEN | PORT_PINCFG_PULLEN; g.OUTSET.reg = m;
+  }
+  static bool read(I2cLine l) { const PinDescription &p = pd(l); return PORT->Group[p.ulPort].IN.reg >> p.ulPin & 1; }
   static void delayUs(uint32_t us) { delayMicroseconds(us); }
 };
 SoftI2c<I2cPins> bb;
 #include "Sensors.h"
 
+// Battery millivolts: average of 8 12-bit reads, 3.3 V full scale, x2 for the divider.
+// On USB the charger holds this near 4.2 V; it reflects the cell only on battery.
 uint32_t readVbatMv() {
   uint32_t sum = 0;
   for (unsigned i = 0; i < 8; ++i) sum += analogRead(VBAT);
@@ -575,18 +582,22 @@ bool usbHostActive() {
 }
 // Once a USB host is seen, stay in light sleep for the session (USB and !status keep
 // working). Plugging USB in later: press reset once, or wait for the next report to notice.
+// After a software reset (a flash: bossac -R) light sleep is also held for SYST_LIGHT_MS. This
+// host does not notice the reset (no disconnect is logged, even with a 1 s USBDevice.detach(),
+// Nov 17), so it re-enumerates the app only when it next touches the port, which can be a minute
+// or more later. A device in deep standby cannot answer then and the host gives up.
+constexpr uint32_t SYST_LIGHT_MS = 180000;
+bool holdLight = false;
 void updateSleepMode() {
   if (usbLive && !usbDetachedForTest) usbSeen = true;
-  deepSleep = SENSOR && !usbSeen;
+  if (holdLight && millis() > SYST_LIGHT_MS) holdLight = false; // millis() runs: light sleep
+  deepSleep = SENSOR && !usbSeen && !holdLight;
 }
 void setup() {
   resetCause = PM->RCAUSE.reg;
   traceBegin(resetCause);
   StageScope stage(ST_SETUP);
-  // After a flash (bossac -R = software reset) the reset is too short for the host to notice a
-  // disconnect, so it never re-enumerates the app and the sensor falls back to deep standby.
-  // Drop off the bus for 1 s so the host sees a fresh device.
-  if (resetCause & PM_RCAUSE_SYST) { USBDevice.detach(); delay(1000); USBDevice.attach(); }
+  holdLight = resetCause & PM_RCAUSE_SYST; // see updateSleepMode()
   // SAMD21 standby erratum workaround, also used in ArduinoLowPower configGCLK6().
   // Do not allow flash to power completely down during standby wake transitions.
   NVMCTRL->CTRLB.bit.SLEEPPRM = NVMCTRL_CTRLB_SLEEPPRM_DISABLED_Val;
@@ -619,15 +630,17 @@ void setup() {
   // boot leaves I2C off) instead of freezing it until someone presses reset.
   wdtBegin();
   if (SENSOR) {
-    // A reset (watchdog or button) inside an I2C access means a stuck bus: leave I2C off this boot.
+    // A reset (watchdog or button) inside an I2C access means a stuck bus: I2C starts off and is
+    // retried after 10 minutes. Lines low: retried after a minute (i2cReady()).
     const char *lines = i2cLinesCheck();
-    if (previousTraceValid && previousTrace.stage == ST_I2C) { i2cOffReason = "reset during I2C last boot"; i2cOffForBoot = true; }
-    else if (lines) { i2cOffReason = lines; i2cLinesCheckedMs = wallMs(); }
+    if (previousTraceValid && previousTrace.stage == ST_I2C) { i2cOffReason = "reset during I2C last boot"; i2cRetryMs = I2C_RESET_RETRY_MS; }
+    else if (lines) i2cOffReason = lines;
     i2cOff = *i2cOffReason != 0;
+    i2cLinesCheckedMs = wallMs();
     // Sensors are first probed at the first report (after the start-up delay and the USB check,
     // > 1.5 s), not here: accesses within milliseconds of reset failed on Nov 16.
     char msg[96];
-    snprintf(msg, sizeof(msg), "# i2c %s%s", i2cOff ? "OFF this boot: " : "bus idle high, ", i2cOff ? i2cOffReason : "ok");
+    snprintf(msg, sizeof(msg), "# i2c %s%s", i2cOff ? "OFF, retried later: " : "bus idle high, ", i2cOff ? i2cOffReason : "ok");
     logLine(msg);
   }
   delay(1500);

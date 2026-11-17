@@ -33,21 +33,21 @@ Item numbers (F1, D2, H1...) refer to it.
 Flash with `arduino-cli upload -p /dev/ttyACM1 --fqbn adafruit:samd:adafruit_feather_m0 --input-dir build/sensor`.
 If the board does not return on USB afterwards, press reset once. Wait 7 s after opening the port before a command.
 
-1. **Flash the current `main`** and check packets (pressure, air temp, RH present) and `!status`.
-2. **F1:** in `link.ino` `I2cPins::low()`, replace `pinMode(OUTPUT); digitalWrite(LOW)` with direct port writes:
-   `PORT->Group[port].OUTCLR.reg = mask; PORT->Group[port].PINCFG[pin].reg = PORT_PINCFG_INEN; PORT->Group[port].DIRSET.reg = mask;`
-   (and `release()` as DIRCLR, then PINCFG = INEN | PULLEN, then OUTSET). Run `!i2c-probe` 20 times: expect
-   `0x44: ACK`, `0x77: ACK`, SHT31 status CRC OK every time, no FAULT line. Then correct the comment.
-3. **F2:** print the raw SDA/SCL reads from `i2cLinesCheck()` at boot (it already logs `# i2c ...`); reset 20 times
-   and note any "held low". None in 20 -> leave the 1-minute re-check as the only safeguard and say so in the comment.
-4. **F4, F5** (`link/Sensors.h`): `shtRead()` poll limit 150 x 10 ms -> 10 x 10 ms; after 3 consecutive failures set
-   `shtAddr = 0` so the 1-minute probe takes over. In `shtBegin()`, send Break + soft reset only when the first
-   status read fails.
-5. **F6:** drop `i2cOffForBoot`: after a reset during I2C, start with I2C off and let `i2cReady()` re-check after a
-   minute like the low-lines case.
-6. **F3:** find why USB does not re-enumerate after a flash (suspect: host sees no disconnect; the 1 s
-   `USBDevice.detach()` in `setup()` did not cure it). Fallback: stay in light sleep for 60 s after a software reset
-   (`resetCause & PM_RCAUSE_SYST`) before allowing deep standby, and remove the 1 s detach if it does not help.
+Done on Nov 17 (05:00-05:40):
+
+1. (Done) Flashed `main`: first packet of the new session carried pressure, air temp and RH; `!status` clean.
+2. (Done) **F1:** `I2cPins` uses direct port writes. `!i2c-probe` 40/40 clean (0x44, 0x77 ACK, SHT31 status CRC OK).
+3. (Done) **F2:** 24 software resets, SDA/SCL read high at every boot; no false "held low". The 1-minute re-check
+   stays as the only safeguard. 21 of 22 first packets after `!diag-reset` arrived.
+4. (Done) **F4, F5:** SHT31 poll 10 x 10 ms; re-probe after 3 failed reads in a row; probe reads status first and
+   sends Break + soft reset only if that fails.
+5. (Done) **F6:** `i2cOffForBoot` removed. A reset during I2C starts with I2C off and re-checks after 10 minutes
+   (lines low: 1 minute), so a bus that really hangs costs one reset per 10 minutes, not one per minute.
+6. (Mitigated) **F3:** the host (sensor is behind a VIA 2109:2813 hub) logs no disconnect for a software reset,
+   even with the 1 s detach. It re-enumerates after the port is opened and closed. A board in deep standby can't
+   answer then. Fix: hold light sleep for 3 minutes after a software reset (`SYST_LIGHT_MS`); the detach was
+   removed. Over 22 resets the port came back after 1-9 pokes (3.5 s to 2.5 min). To check in the morning: plug the sensor into a PC port directly (no hub), `!diag-reset`, and see whether
+   `journalctl -k` logs a disconnect without any poke. If it does, the hub is the cause.
 7. `./build.sh`, flash, 10 minutes of packets, then `git tag feather-m0-w9 && git push --tags`.
 
 ### C. Rebuild and deployment (needs hands)

@@ -73,8 +73,9 @@ $CLI upload -p /dev/ttyACM0 --fqbn adafruit:samd:adafruit_feather_m0 --input-dir
 * **Sensor board (UF2 bootloader):** this host must ignore the bootloader's USB drive or flashing fails with
   "No device found". Once per boot: `echo 239a:0015:i | sudo tee /sys/module/usb_storage/parameters/quirks`, or
   permanently `options usb-storage quirks=239a:0015:i` in `/etc/modprobe.d/feather-uf2.conf`.
-* **After flashing the sensor it often does not come back on USB** and drops into deep standby. Packets still arrive
-  by radio. Press reset once with USB connected to get the USB port (and light sleep) back.
+* **After a flash or `!diag-reset` this host may not notice the reset**: the old port stays listed but answers nothing.
+  Open and close the port (e.g. send any `!` command) and it re-enumerates within seconds. The sensor holds light
+  sleep for 3 minutes after a software reset so this works; after that, press reset once.
 * Manual flash from a breathing-LED bootloader (double-tap reset):
   `~/.arduino15/packages/adafruit/tools/bossac/1.8.0-48-gb176eee/bossac -i -d --port=ttyACM1 -U -e -w -v --offset=0x2000 -R build/sensor/link.ino.bin`.
   **`--offset=0x2000` is required** (the bootloader occupies the first 8 KB).
