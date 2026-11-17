@@ -48,7 +48,7 @@ Done on Nov 17 (05:00-05:40):
    answer then. Fix: hold light sleep for 3 minutes after a software reset (`SYST_LIGHT_MS`); the detach was
    removed. Over 22 resets the port came back after 1-9 pokes (3.5 s to 2.5 min). To check in the morning: plug the sensor into a PC port directly (no hub), `!diag-reset`, and see whether
    `journalctl -k` logs a disconnect without any poke. If it does, the hub is the cause.
-7. `./build.sh`, flash, 10 minutes of packets, then `git tag feather-m0-w9 && git push --tags`.
+7. (Done) Final build flashed 05:33 (session bb3ed4fa), 11/11 packets in 10 minutes, tagged `feather-m0-w9`.
 
 ### C. Rebuild and deployment (needs hands)
 1. Wire wind reed (D5) and rain reed (D10) with 1 k + 100 nF filters; wiggle test with `raw_edges` in `!status`.
