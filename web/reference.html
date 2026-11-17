@@ -86,7 +86,7 @@ resolution, never revolutions or tips.</p>
 <tr><td>D1 (TX)</td><td>PA10 · SERCOM0</td><td>RYLR998 RXD</td><td>Serial1, 115200 baud, 8N1. TX by DMA (no idle gaps).</td></tr>
 <tr><td>D0 (RX)</td><td>PA11 · SERCOM0</td><td>RYLR998 TXD</td><td></td></tr>
 <tr><td>D6</td><td>PA20</td><td>RYLR998 NRST</td><td>Active low, driven high. Pulsed after 3 consecutive send failures.</td></tr>
-<tr><td>SDA / SCL</td><td>PA22 / PA23</td><td>BMP180 (0x77), SHT31 (0x44 or 0x45)</td><td>100 kHz. Breakout boards carry the pull-ups.</td></tr>
+<tr><td>SDA / SCL</td><td>PA22 / PA23</td><td>BMP180 (0x77), SHT31 (0x44 or 0x45)</td><td>Software I2C, about 50 kHz, with timeouts. Internal pull-ups plus the breakouts' own.</td></tr>
 <tr><td>3V</td><td></td><td>RYLR998 VCC, BMP180, SHT31</td><td>On-board AP2112K-3.3 regulator.</td></tr>
 <tr><td>BAT / JST</td><td></td><td>LiPo, 1200 mAh</td><td>Charged from USB by the on-board MCP73831.</td></tr>
 <tr><td>A7 = D9</td><td>PA07</td><td>On-board battery divider (1:2)</td><td>8 × 12-bit reads, averaged. Don't use D9 for anything else.</td></tr>
@@ -111,7 +111,12 @@ noise. It doesn't affect the 10 ms debounce. Firmware cannot reject dropouts of 
 wiring must be solid: crimped or soldered, strain-relieved, with a proper connector at the enclosure wall.</div>
 </section>
 
-<section class="block" id="receiver"><h2>Receiver</h2>
+<section class="block" id="receiver"><h2>Boards and receiver</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Role</th><th>Board</th><th>USB serial ID</th><th>Bootloader</th></tr></thead><tbody>
+<tr><td>Sensor</td><td>Feather M0 Adalogger</td><td><code>BD0F94DC50305841502E3120FF0B0E2F</code></td><td>UF2 (USB 239a:0015). This host needs the <code>usb_storage</code> quirk to flash it; see the README.</td></tr>
+<tr><td>Receiver</td><td>Feather M0</td><td><code>B55AB548514D4D5447202020FF012F18</code></td><td>SAM-BA (USB 239a:000b)</td></tr>
+</tbody></table></div>
 <p>A second Feather M0 with an RYLR998 on the host's USB, running the same sketch built with <code>SENSOR=0</code>
 (radio address 2, no sensors). It prints each received frame on USB as
 <code>+RCV=&lt;from&gt;,&lt;length&gt;,&lt;payload&gt;,&lt;RSSI dBm&gt;,&lt;SNR dB&gt;</code>, which <code>web_server.py</code>
@@ -216,6 +221,10 @@ two closures per turn need not be evenly spaced, because A + B is always a full 
 <tr><td>SHT31</td><td>every 30 s, single shot, high repeatability, CRC-8 checked</td><td>~16 ms delay</td><td>5 min</td><td>1 min</td></tr>
 <tr><td>Battery</td><td>every report, 8 × 12-bit ADC</td><td>&lt; 1 ms</td><td>—</td><td>—</td></tr>
 </tbody></table></div>
+<p><b>I2C bus:</b> a software (bit-banged) master, because the SAMD21 <code>Wire</code> driver has no timeouts and hung the
+board with a faulty sensor (Nov 16). Every wait times out (20 ms of clock stretching), and each sensor access starts with a bus clear
+(9 clocks and a STOP). SDA and SCL are checked at boot; if either is low, I2C stays off and is re-checked every minute. Sensors are
+first probed at the first report, not in the first milliseconds after reset.</p>
 <p>Counting carries on in interrupts during the delays. A watchdog reset that happens during any I2C access is taken as a stuck bus: both I2C
 sensors stay off until the next boot, and they report 0.</p>
 <h3>Power modes and watchdog</h3>
@@ -308,6 +317,8 @@ Still to measure with a meter: the calm floor (battery lead) and the RYLR998 alo
 <tr><td><code>!status</code></td><td>Counters, clock, radio, battery, BMP180, SHT31, firmware, reset cause, standby statistics.</td></tr>
 <tr><td><code>!report</code></td><td>Sensor: send a report now.</td></tr>
 <tr><td><code>!i2c-scan</code></td><td>Sensor: list I2C addresses that answer.</td></tr>
+<tr><td><code>!i2c-probe</code></td><td>Sensor: idle SDA/SCL levels with and without the internal pull-ups, addresses that acknowledge, and a CRC-checked SHT31 status read.</td></tr>
+<tr><td><code>!sht</code></td><td>Sensor: re-run the SHT31 setup and one measurement, printing each step and the time taken.</td></tr>
 <tr><td><code>!standby-test</code></td><td>Sensor: say whether deep standby is active.</td></tr>
 <tr><td><code>!uart-test</code></td><td>Sensor: simulate a missing TX-complete on the next send.</td></tr>
 <tr><td><code>!xosc-test</code> / <code>!xosc-test deep</code></td><td>Stop the crystal for 90 s to exercise failover (expect it within ~8 s). <i>deep</i> also forces deep standby and detaches USB until the crystal is restored (up to ~11 min).</td></tr>
@@ -336,9 +347,12 @@ Still to measure with a meter: the calm floor (battery lead) and the RYLR998 alo
 <tr><td>BMP180 barometer</td><td><a href="/docs/BMP180.pdf">BMP180.pdf</a> <span class="tag">Bosch</span></td></tr>
 <tr><td>SHT31 temperature/humidity</td><td><a href="/docs/Datasheet_SHT3x_DIS.pdf">Datasheet_SHT3x_DIS.pdf</a> <span class="tag">Sensirion</span></td></tr>
 <tr><td>AS5600 vane sensor</td><td><a href="/docs/AMS_AS5600_Datasheet_EN.pdf">AMS_AS5600_Datasheet_EN.pdf</a> <span class="tag">ams</span></td></tr>
-<tr><td>Feather M0 Adalogger</td><td><a href="https://learn.adafruit.com/adafruit-feather-m0-adalogger" rel="noopener">Adafruit guide (pinouts, schematic)</a> <span class="tag">external</span></td></tr>
+<tr><td>Feather M0 Adalogger</td><td><a href="/docs/adafruit_products_Adafruit_Feather_M0_Adalogger_Pinout.png">Pinout diagram</a> · <a href="https://learn.adafruit.com/adafruit-feather-m0-adalogger" rel="noopener">Adafruit guide (schematic)</a> <span class="tag">external</span></td></tr>
 <tr><td>SAMD21G18</td><td><a href="https://www.microchip.com/en-us/product/ATSAMD21G18" rel="noopener">Microchip product page and datasheet</a> <span class="tag">external</span></td></tr>
-<tr><td>Feather M0 baseline</td><td><a href="/docs/feather-m0-baseline.md">feather-m0-baseline.md</a>: deployed W8 record, rebuild lessons</td></tr>
+<tr><td>Design notes</td><td><a href="/docs/design.md">design.md</a>: how each quantity is measured and displayed</td></tr>
+<tr><td>Lessons learned</td><td><a href="/docs/lessons.md">lessons.md</a></td></tr>
+<tr><td>Work plan</td><td><a href="/docs/plan.md">plan.md</a>: open work and bench instructions</td></tr>
+<tr><td>W8 deployment record</td><td><a href="/docs/feather-m0-baseline.md">feather-m0-baseline.md</a>: first sensor board, Nov 9–14</td></tr>
 <tr><td>nRF52840 port (parked)</td><td><a href="/docs/nrf52840-port-plan.md">nrf52840-port-plan.md</a>, <a href="/docs/Teyleten-Robot-Pro-Micro-NRF52840.pdf">Pro Micro manual</a>, <a href="/docs/nice-nano-schamatic.png">nice!nano schematic</a>, <a href="/docs/NRF52840-DK.pdf">nRF52840-DK</a></td></tr>
 </tbody></table></div>
 </section>

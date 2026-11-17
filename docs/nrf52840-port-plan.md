@@ -159,6 +159,26 @@ Consequences:
 - **VBUSDETECT reads the board's own VBUS.** If the charge switch sits between the panel and the board's USB, it reads
   the switched side. P1.11 is still needed for "panel present" upstream of the switch.
 
+## Bring-up results, Nov 15–16 (Teyleten Pro Micro clone)
+
+Measured with the probe sketch on branch `nrf52840-port` (`node52/`), no sensors attached.
+
+| Check | Result |
+|---|---|
+| 32.768 kHz crystal | Fitted; −8.9 ppm. Internal RC: −0.24% uncalibrated |
+| Reed input path (SENSE → PORT event → PPI → EGU3, 10 ms debounce on RTC2) | Correct for clean pulses, 0.3 ms bounce, 5 ms dropouts and 10 rev/s; a 15 ms dropout counts twice, as on the Feather |
+| UART, one DMA transfer | 250 bytes in 21.72 ms, no gaps |
+| Supply | High-voltage mode (VDDH); battery readable internally as VDDH/5; no divider on P0.04 |
+| VCC pin | From the board's 3.3 V regulator, at least 120 mA. Enable is P0.13, **active high**, with a pull-up of about 5 kΩ: holding it low costs about 640 µA |
+| Sleep current, System ON, RTC running, nothing attached | About 110 µA with VCC on (regulator marked J2RD, unidentified); about 750 µA with P0.13 held low |
+| Charger | Fuman LTH7R/4054: no temperature input |
+| Bootloader | Updated to Adafruit 0.11.0 (nice_nano build, S140 6.1.1). Software entry still fails: the bootloader clears GPREGRET, then starts the app within 0.2 s. Flashing needs a double-tap of RST |
+| Not done | System OFF current (board-only floor); cause of the bootloader's early exit |
+
+Conclusion: the nRF52840 itself suits the job (crystal, low-power edge detection, clean UART), but this clone's power
+circuit does not. A production design would be a custom board: nRF52840 module, a regulator with about 1 µA quiescent
+current, a load switch for the vane, and a charger with a temperature input.
+
 ## Power notes (to verify on the bench first)
 
 - **Standby current:** the manual quotes "~1 mA" standby with the LED off. The nRF itself idles at a few µA, so the rest
