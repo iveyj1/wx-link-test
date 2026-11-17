@@ -2,6 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 CLI=${ARDUINO_CLI:-/home/user/pnp/Arduino/arduino-cl/bin/arduino-cli}
+# Python with pyserial: $PYTHON, else the venv, else whatever python3 is on PATH.
+PY=${PYTHON:-$( [[ -x ~/.local/bin/venv/bin/python3 ]] && echo ~/.local/bin/venv/bin/python3 || command -v python3)}
 for role in sensor receiver; do
   flag=1; [[ $role == receiver ]] && flag=0
   "$CLI" compile --fqbn adafruit:samd:adafruit_feather_m0 \
@@ -23,6 +25,6 @@ g++ -std=c++11 -Wall -Wextra test_sht31.cpp -o build/test_sht31
 build/test_sht31
 g++ -std=c++11 -Wall -Wextra test_softi2c.cpp -o build/test_softi2c
 build/test_softi2c
-python -m unittest test_monitor test_web test_reference test_spindown
+"$PY" -m unittest test_monitor test_web test_reference test_spindown
 node test_display.js
-python test_trace_layout.py
+"$PY" test_trace_layout.py
