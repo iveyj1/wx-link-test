@@ -500,7 +500,10 @@ function paintWx(){
  else{$('pTrend').textContent='—';$('pTrendNote').textContent='needs 3 h of readings';}
 }
 // One band-and-line chart: pts {t0, mean, lo, hi}; values already in display units.
-function drawBand(cv,pts,start,span,fmt,label,color){
+function drawBand(cv,pts,start,span,fmt,label,color){return drawBands(cv,[{pts,color}],start,span,fmt,label);}
+// Several band-and-line series on one axis: series [{pts, color, name}]; a legend is drawn when names are given.
+function drawBands(cv,series,start,span,fmt,label){
+ const pts=series.flatMap(s=>s.pts);
  const c=cv.getContext('2d'), width=cv.clientWidth, height=150, left=60, right=16, top=12, plotH=height-top-30, plotW=width-left-right;
  const ratio=window.devicePixelRatio||1;cv.style.height=height+'px';cv.width=Math.round(width*ratio);cv.height=Math.round(height*ratio);c.setTransform(ratio,0,0,ratio,0,0);
  c.fillStyle='#101e2b';c.fillRect(0,0,width,height);c.font='11px system-ui';c.textBaseline='middle';
@@ -517,21 +520,29 @@ function drawBand(cv,pts,start,span,fmt,label,color){
   c.fillText(span>86400?new Date(t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',hour12:false}):timeText(t).slice(0,5),x,top+plotH+16);}
  shadeMaint(c,start,start+span,X,top,plotH,'baro');
  const w=Math.max(60,span/720), gap=(a,b)=>b.t0-a.t0>3*w;
- c.fillStyle=color+'2e';
- for(const p of pts){const x0=X(p.t0),x1=X(p.t0+w);c.fillRect(x0,Y(p.hi),Math.max(1,x1-x0),Math.max(1,Y(p.lo)-Y(p.hi)));}
- c.strokeStyle=color;c.lineWidth=1.6;c.beginPath();
- pts.forEach((p,i)=>{const x=X(p.t0+w/2),y=Y(p.mean);if(i===0||gap(pts[i-1],p))c.moveTo(x,y);else c.lineTo(x,y);});
- c.stroke();c.lineWidth=1;
+ for(const {pts,color} of series){
+  c.fillStyle=color+'2e';
+  for(const p of pts){const x0=X(p.t0),x1=X(p.t0+w);c.fillRect(x0,Y(p.hi),Math.max(1,x1-x0),Math.max(1,Y(p.lo)-Y(p.hi)));}
+  c.strokeStyle=color;c.lineWidth=2;c.beginPath();
+  pts.forEach((p,i)=>{const x=X(p.t0+w/2),y=Y(p.mean);if(i===0||gap(pts[i-1],p))c.moveTo(x,y);else c.lineTo(x,y);});
+  c.stroke();c.lineWidth=1;}
  c.fillStyle='#b8cbd8';c.textAlign='left';c.fillText(label,left+6,top+8);
+ // Legend after the title: a line swatch in the series colour, the name in text ink.
+ let lx=left+12+c.measureText(label).width;
+ for(const s of series){if(!s.name)continue;
+  c.strokeStyle=s.color;c.lineWidth=2;c.beginPath();c.moveTo(lx,top+8);c.lineTo(lx+14,top+8);c.stroke();c.lineWidth=1;
+  c.fillStyle='#b8cbd8';c.fillText(s.name,lx+18,top+8);lx+=26+c.measureText(s.name).width;}
  return pts.length?`${fmt(lo)}–${fmt(hi)}`:null;
 }
 function drawWx(){
  const now=clock(), start=now-wxRange, pu=altitude?'hPa sea level':'hPa', tu=tUnits==='F'?'°F':'°C';
  const pr=drawBand($('pChart'),wxPoints.map(p=>({t0:p.t0,mean:hPa(p.p),lo:hPa(p.plo),hi:hPa(p.phi)})),start,wxRange,v=>v.toFixed(1),`Pressure, ${pu}`,'#b48cff');
  const tr=drawBand($('tChart'),wxPoints.map(p=>({t0:p.t0,mean:tVal(p.c),lo:tVal(p.clo),hi:tVal(p.chi)})),start,wxRange,v=>v.toFixed(1),`Enclosure temperature, ${tu}`,'#ff9f6c');
- drawBand($('aChart'),wxAir.map(p=>({t0:p.t0,mean:tVal(p.c),lo:tVal(p.clo),hi:tVal(p.chi)})),start,wxRange,v=>v.toFixed(1),`Air temperature (SHT31), ${tu}`,'#6cc4ff');
+ drawBands($('aChart'),[
+  {pts:wxAir.map(p=>({t0:p.t0,mean:tVal(p.c),lo:tVal(p.clo),hi:tVal(p.chi)})),color:'#6cc4ff',name:'air temperature'},
+  {pts:wxAir.filter(p=>p.d!=null).map(p=>({t0:p.t0,mean:tVal(p.d),lo:tVal(p.dlo),hi:tVal(p.dhi)})),color:'#f2c14e',name:'dew point'}],
+  start,wxRange,v=>v.toFixed(1),`SHT31, ${tu}:`);
  drawBand($('hChart'),wxAir.map(p=>({t0:p.t0,mean:p.h,lo:p.hlo,hi:p.hhi})),start,wxRange,v=>v.toFixed(0),'Relative humidity, %','#5fd3a0');
- drawBand($('dChart'),wxAir.filter(p=>p.d!=null).map(p=>({t0:p.t0,mean:tVal(p.d),lo:tVal(p.dlo),hi:tVal(p.dhi)})),start,wxRange,v=>v.toFixed(1),`Dew point (from SHT31), ${tu}`,'#4fb8c8');
  $('wxScale').textContent=pr?`Pressure ${pr} ${pu} · temperature ${tr} ${tu} · last ${durText(wxRange)}`:state?.maintenance_active&&state.latest?.pressure_pa!=null?'No readings outside maintenance in this range yet (readings during maintenance are hidden)':'No pressure readings in this range yet (sensor firmware W7 with a BMP180)';
  paintWx();
 }
