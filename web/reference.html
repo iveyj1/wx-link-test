@@ -58,7 +58,7 @@ differ. The parked nRF52840 port is on git branch <code>nrf52840-port</code>.</p
  <rect class="dg-box" x="10" y="14" width="150" height="40" rx="8"/><text class="dg-t" x="22" y="32">Wind reed</text><text class="dg-s" x="22" y="47">2 closures / rev · D5</text>
  <rect class="dg-box" x="10" y="62" width="150" height="40" rx="8"/><text class="dg-t" x="22" y="80">Rain reed</text><text class="dg-s" x="22" y="95">1 closure / tip · D10</text>
  <rect class="dg-box" x="10" y="110" width="150" height="40" rx="8"/><text class="dg-t" x="22" y="128">BMP180 · SHT31</text><text class="dg-s" x="22" y="143">I2C 0x77 · 0x44</text>
- <rect class="dg-box" x="10" y="158" width="150" height="34" rx="8"/><text class="dg-t" x="22" y="180">LiPo 1200 mAh</text>
+ <rect class="dg-box" x="10" y="158" width="150" height="34" rx="8"/><text class="dg-t" x="22" y="180">LiPo 400 mAh</text>
  <path class="dg-l" d="M160 34H200M160 82H200M160 130H200M160 175H200"/>
  <rect class="dg-hi" x="200" y="14" width="170" height="178" rx="10"/><text class="dg-t" x="214" y="38">Sensor Feather M0</text><text class="dg-s" x="214" y="56">Adalogger · SAMD21G18</text>
  <text class="dg-s" x="214" y="80">32768 Hz RTC timebase</text><text class="dg-s" x="214" y="96">10 ms debounce</text><text class="dg-s" x="214" y="112">deep standby on battery</text><text class="dg-s" x="214" y="128">report ≤ 1/s, heartbeat 60 s</text>
@@ -88,7 +88,7 @@ resolution, never revolutions or tips.</p>
 <tr><td>D6</td><td>PA20</td><td>RYLR998 NRST</td><td>Active low, driven high. Pulsed after 3 consecutive send failures.</td></tr>
 <tr><td>SDA / SCL</td><td>PA22 / PA23</td><td>BMP180 (0x77), SHT31 (0x44 or 0x45)</td><td>Software I2C, about 50 kHz, with timeouts. Internal pull-ups plus the breakouts' own.</td></tr>
 <tr><td>3V</td><td></td><td>RYLR998 VCC, BMP180, SHT31</td><td>On-board AP2112K-3.3 regulator.</td></tr>
-<tr><td>BAT / JST</td><td></td><td>LiPo, 1200 mAh</td><td>Charged from USB by the on-board MCP73831.</td></tr>
+<tr><td>BAT / JST</td><td></td><td>LiPo, 400 mAh (1200 mAh until Nov 18)</td><td>Charged from USB by the on-board MCP73831 at about 100 mA (0.25 C for 400 mAh).</td></tr>
 <tr><td>A7 = D9</td><td>PA07</td><td>On-board battery divider (1:2)</td><td>8 × 12-bit reads, averaged. Don't use D9 for anything else.</td></tr>
 </tbody></table></div>
 <h3>Keep free</h3>
@@ -293,7 +293,7 @@ Results are on the <a href="/spindown.html">spin-down page</a>.</li>
 </section>
 
 <section class="block" id="power"><h2>Power</h2>
-<p>From the logged battery voltage, on a 1200 mAh LiPo near 4.1 V (about 1.2–1.8 mAh per mV, so treat currents as ±50%):</p>
+<p>Measured on the earlier 1200 mAh LiPo near 4.1 V (about 1.2–1.8 mAh per mV, so treat currents as ±50%). The 400 mAh battery fitted on Nov 18 has about a third of the charge per mV, so expect the same currents to show about 3× these slopes and a charge to last about a third as long (roughly 1.5 weeks at the mixed rate).</p>
 <div class="table-wrap"><table>
 <thead><tr><th>Condition</th><th>Packets/h</th><th>Slope</th><th>≈ Current</th></tr></thead><tbody>
 <tr><td>Calm, indoors, 21 °C (Nov 14)</td><td>60</td><td>0.14 mV/h</td><td>~0.2 mA</td></tr>

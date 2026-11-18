@@ -22,7 +22,7 @@ Details and measurements are in [nrf52840-port-plan.md](nrf52840-port-plan.md).
 
 ## Carried into the rebuild
 
-- **Power (from the logged battery voltage, 1200 mAh LiPo):** calm with one report a minute ≈ 0.14 mV/h (≈ 0.2 mA);
+- **Power (from the logged battery voltage, 1200 mAh LiPo; a 400 mAh LiPo is fitted from Nov 18, so expect ~3× the mV/h slopes and ~1/3 the runtime):** calm with one report a minute ≈ 0.14 mV/h (≈ 0.2 mA);
   windy with ~1 report a second ≈ 1.7 mV/h (≈ 2–3 mA); overall ≈ 4–5 weeks per charge. The send rate, not the sleep
   floor, dominates. For production: send every ~10 s and carry the peak gust and shortest revolution in the payload.
   Still to measure with a meter: the calm floor (battery lead) and the RYLR998 in `AT+MODE=1` (its VCC lead, ~10 µA expected).

@@ -56,7 +56,8 @@ Done on Nov 17 (05:00-05:40):
    edges. Still to do: wiggle test with `raw_edges` in `!status`.
 2. D2: meter the calm floor at the battery lead (unplug USB, then reset) and the RYLR998 alone (expect ~10 uA).
 3. New bearing housing if ready; repeat the spin-down.
-4. Deploy; `./maint.py stop` (closes window 6); 30-day soak. Judge it from `/api/hourly`.
+4. (Deployed Nov 18, window 6 closed 16:13, **400 mAh LiPo** in place of the 1200 mAh.) 30-day soak: at the old
+   mixed rate (~1.5-2 mA) one charge lasts about 1.5 weeks, so plan recharges or a bigger cell. Judge it from `/api/hourly`.
 5. Calibrate against the handheld in a steady wind.
 
 ### D. Later
