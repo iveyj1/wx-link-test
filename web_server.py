@@ -328,9 +328,24 @@ class Store:
         self._link = (now, result)
         return result
 
+    def rain_last(self):
+        """The last tip outside maintenance windows and rain faults, and the interval before it (s)
+        when the tip before it also counts; else interval None. The live packet's rain_at and
+        rain_interval_s include bench and handling tips, so the dashboard's rate uses this."""
+        with self.lock:
+            row = self.db.execute(f'SELECT t, added, interval FROM rain WHERE {TIP_OK} ORDER BY t DESC LIMIT 1').fetchone()
+            if row is None:
+                return None
+            t, added, interval = row
+            if interval is not None and added < 2:  # added >= 2: both tips are in this (counted) row
+                # The tip before is in the row just before; it must count too.
+                prior = self.db.execute(f'SELECT {TIP_OK} FROM rain WHERE t < ? ORDER BY t DESC LIMIT 1', (t,)).fetchone()
+                interval = interval if prior and prior[0] else None
+            return dict(t=t, interval=interval)
+
     def status(self):
         windows, faults = self.windows(), self.faults()
-        return dict(connected=self.connected, error=self.error, latest=self.latest,
+        return dict(connected=self.connected, error=self.error, latest=self.latest, rain_last=self.rain_last(),
                     last_serial=self.last_serial, malformed=self.malformed, now=time.time(),
                     link=self.link(), maintenance=windows, maintenance_active=next((w for w in windows if w['end'] is None), None),
                     faults=faults, faults_active=[f for f in faults if f['end'] is None])
@@ -406,11 +421,15 @@ class Store:
             tips, first, last = self.db.execute(
                 f'SELECT COALESCE(SUM(added),0), MIN(t), MAX(t) FROM rain WHERE t >= ? AND t < ? AND {TIP_OK}',
                 (start, end)).fetchone()
+            # Restarts and gaps inside a maintenance window or rain fault lose only tips that are
+            # excluded anyway (bench resets, takedowns), so they do not qualify the total.
             restarts = [r[0] for r in self.db.execute(
-                'SELECT first_t FROM runs WHERE first_t > ? AND first_t < ? '
-                'AND first_t > (SELECT MIN(first_t) FROM runs) ORDER BY first_t', (start, end))]
+                f"SELECT first_t FROM runs WHERE first_t > ? AND first_t < ? "
+                f"AND first_t > (SELECT MIN(first_t) FROM runs) AND {_ok('rain', 'first_t', 'first_t')} ORDER BY first_t",
+                (start, end))]
             gaps = [dict(start=a, end=b) for a, b in self.db.execute(
-                'SELECT start, end FROM gaps WHERE end > ? AND start < ? ORDER BY start', (start, end))]
+                f"SELECT start, end FROM gaps g WHERE end > ? AND start < ? AND NOT EXISTS (SELECT 1 FROM maintenance m "
+                f"WHERE m.start <= g.start AND COALESCE(m.end, 1e18) >= g.end) ORDER BY start", (start, end))]
             since = self.db.execute("SELECT MIN(first_t) FROM runs WHERE version >= 'W5'").fetchone()[0]
             excluded = [w for w in self.windows(start) if w['start'] < end]
             return dict(start=start, end=end, tips=tips, first_tip=first, last_tip=last,

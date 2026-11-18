@@ -279,6 +279,29 @@ class WebTests(unittest.TestCase):
         self.assertEqual(total['tips'], 2)
         self.assertEqual(len(total['maintenance']), 1)
         self.assertEqual(self.store.rain_total(now + 75, now + 100)['maintenance'], [])
+        # Last counted tip: the one at now+80; the tip 1 s before it was inside the window.
+        last = self.store.status()['rain_last']
+        self.assertAlmostEqual(last['t'], now + 80 - 328/32768)
+        self.assertIsNone(last['interval'])
+        self.w5(5, 8, interval=32768*20, received=now + 100)   # previous tip (now+80) counts
+        self.assertAlmostEqual(self.store.status()['rain_last']['interval'], 20.0)
+        self.store.maintenance('start', now=now + 110)
+        self.w5(6, 9, interval=32768*10, received=now + 120)   # bench tip: not the last counted one
+        self.assertAlmostEqual(self.store.status()['rain_last']['t'], now + 100 - 328/32768)
+
+    def test_rain_last_none_and_restarts_in_maintenance(self):
+        now = 1_800_000_000.0
+        self.assertIsNone(self.store.status()['rain_last'])
+        self.w5(1, 0, received=now)
+        self.store.maintenance('start', now=now + 50)
+        self.w5(1, 1, received=now + 60, session='bbbbbbbb', uptime=50000)    # bench reset + tip
+        self.w5(2, 1, received=now + 60 + 2 * 3600, session='bbbbbbbb')       # 2 h gap, all inside
+        self.store.maintenance('stop', now=now + 3 * 3600)
+        self.w5(1, 0, received=now + 4 * 3600, session='cccccccc', uptime=60000)  # restart after: kept
+        self.assertIsNone(self.store.status()['rain_last'])
+        total = self.store.rain_total(now, now + 5 * 3600)
+        self.assertEqual(total['restarts'], [now + 4 * 3600])
+        self.assertEqual(total['gaps'], [dict(start=now + 60 + 2 * 3600, end=now + 4 * 3600)])
 
     def test_faults_hide_one_sensor(self):
         now = 1_800_000_000.0

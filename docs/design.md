@@ -11,7 +11,7 @@ reference page (`/reference.html`, source `web/reference.html`).
 
 ### Rain
 * Each debounced D10 closure is one tip; the reopening is ignored. The default calibration is **0.3690 mm/tip**: 2 ml per tip over a 49.5 × 109.5 mm funnel (2000 mm³ ÷ 5420.25 mm²). Check it by pouring a known volume (100 ml ≈ 50 tips ≈ 18.4 mm).
-* The dashboard shows the total from local midnight to midnight, hourly bars, and rate = mm/tip ÷ max(last tip interval, time since last tip). That rate decays during dry spells and shows 0 after 1 h without a tip.
+* The dashboard shows the total from local midnight to midnight, hourly bars, and rate = mm/tip ÷ max(last tip interval, time since last tip). That rate decays during dry spells and shows 0 after 1 h without a tip. Last tip and rate use only counted tips (outside maintenance windows and gauge faults, `rain_last` in the status); restarts and gaps inside a window do not qualify a rain total; the battery slope uses only readings since the last window ended.
 * The chart shows 1–4 days; each day's line restarts from 0 at local midnight, with the day's total above it.
 * **Total since a mark** (per browser): **Mark now** (like emptying a manual gauge), a date and time, or a preset (last 1 h/24 h/72 h/7 days, month, year, water year from Oct 1). The card warns when the total is incomplete: tips not yet reported before a **sensor restart** are lost; **data gaps** over 1 h are harmless within one sensor run, because counts are cumulative; and nothing is counted before rain logging began.
 

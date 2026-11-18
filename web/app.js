@@ -29,12 +29,10 @@ const clock=()=>Date.now()/1000+offset;
 // Maintenance windows (from the server): data inside is recorded but not shown or totalled.
 const windows=()=>state?.maintenance||[];
 const winEnd=w=>w.end??clock();
-const inMaint=t=>t!=null&&windows().some(w=>t>=w.start&&t<winEnd(w));
 // Sensor faults (fault.py): one sensor's data is wrong, e.g. a disconnected wire reading calm.
 const SENSOR_NAMES={wind:'Anemometer',rain:'Rain gauge',baro:'Barometer',air:'Air temperature/humidity'};
 const faults=sensor=>(state?.faults||[]).filter(f=>f.sensor===sensor);
 const activeFault=sensor=>(state?.faults_active||[]).find(f=>f.sensor===sensor);
-const inFault=(sensor,t)=>t!=null&&faults(sensor).some(f=>t>=f.start&&t<winEnd(f));
 const hm=t=>new Date(t*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
 function paintMaint(){
  const fa=state?.faults_active||[];
@@ -307,15 +305,17 @@ function paintRain(){
  if(!p||p.rain_tips==null){$('rainRate').textContent='—';$('rainLast').textContent='—';
   $('rainGauge').textContent='No rain data yet (needs sensor firmware W5)';$('rainRateNote').textContent='';return;}
  // Rate = calibration / max(last tip interval, time since last tip): decays during dry spells.
- const age=p.rain_at==null?null:Math.max(0,now-p.rain_at);
- let rate=null,note='needs two tips since sensor start';
+ // Last tip and interval come from the server and leave out maintenance windows and gauge faults
+ // (the live packet's rain_at includes bench and handling tips).
+ const last=state.rain_last, age=last?Math.max(0,now-last.t):null;
+ let rate=null,note='needs two counted tips in a row';
  if(age!=null&&age>3600){rate=0;note='no tip for over 1 h';}
- else if(p.rain_interval_s){rate=mmPerTip*3600/Math.max(p.rain_interval_s,age);note=age>p.rain_interval_s?'decaying: no tip since; upper bound':'from the last two tips';}
- if(inMaint(p.rain_at))note+=' · last tip during maintenance: not in totals';
- if(inFault('rain',p.rain_at))note+=' · last tip during a gauge fault: not in totals';
+ else if(last?.interval){rate=mmPerTip*3600/Math.max(last.interval,age);note=age>last.interval?'decaying: no tip since; upper bound':'from the last two tips';}
+ if(p.rain_at!=null&&(!last||p.rain_at>last.t+1))note+=` · tip at ${timeText(p.rain_at)} not counted (maintenance or gauge fault)`;
  if(activeFault('rain'))note='RAIN GAUGE FAULT · '+note;
+ else if(state.maintenance_active)note='MAINTENANCE: new tips not counted · '+note;
  $('rainRate').textContent=rate==null?'—':rainPad(rate,3);$('rainRateNote').textContent=note;
- $('rainLast').textContent=p.rain_at==null?'none since start':`${timeText(p.rain_at)} · ${age<120?age.toFixed(0)+' s':age<7200?(age/60).toFixed(0)+' min':(age/3600).toFixed(1)+' h'} ago`;
+ $('rainLast').textContent=last==null?'none counted':`${timeText(last.t)} · ${age<120?age.toFixed(0)+' s':age<7200?(age/60).toFixed(0)+' min':age<172800?(age/3600).toFixed(1)+' h':(age/86400).toFixed(0)+' d'} ago`;
  $('rainGauge').textContent=`Gauge D10 ${p.rain_pin?'open':'closed'} · ${p.rain_tips} tips since sensor start · raw D10 edges ${p.rain_raw_edges}`;
 }
 function drawRain(){
@@ -398,9 +398,12 @@ async function loadBat(){
  try{const d=await get(`/api/battery?start=${now-batRange}&end=${now}`);if(gen!==batGen)return;batPoints=d.points;batFetched=Date.now();drawBat();}
  catch(e){if(gen===batGen)$('batScale').textContent=`Cannot load battery: ${e.message}`;}
 }
-// Least-squares slope (mV/h) over the last 6 h; needs at least 1 h of readings.
+// Least-squares slope (mV/h) over the last 6 h; needs at least 1 h of readings. Only readings
+// since the last maintenance window ended: on the bench the charger holds the voltage on USB.
+const batFrom=now=>Math.max(now-21600,...windows().filter(w=>w.end!=null&&w.end<=now).map(w=>w.end));
 function batSlope(now){
- const pts=batPoints.filter(p=>p.t0>=now-21600);
+ if(state?.maintenance_active)return null;
+ const from=batFrom(now), pts=batPoints.filter(p=>p.t0>=from);
  if(pts.length<3||pts[pts.length-1].t0-pts[0].t0<3600)return null;
  const n=pts.length,mx=pts.reduce((a,p)=>a+p.t0,0)/n,my=pts.reduce((a,p)=>a+p.mv,0)/n;
  let sxy=0,sxx=0;for(const p of pts){sxy+=(p.t0-mx)*(p.mv-my);sxx+=(p.t0-mx)**2;}
@@ -412,7 +415,7 @@ function paintBat(){
  $('batNote').textContent=p?.vbat_v==null?'Needs sensor firmware W6':`at last packet, ${durText(Math.max(0,now-p.received))} ago`;
  const sl=batSlope(now);
  $('batSlope').textContent=sl==null?'—':(sl>=0?'+':'−')+pad(Math.abs(sl),1,3).trimStart();
- $('batSlopeNote').textContent=sl==null?'needs at least 1 h of readings':sl<0?`about ${durText(Math.max(0,(batPoints[batPoints.length-1].mv-3500)/-sl*3600))} to 3.5 V at this rate (rough)`:'not discharging (charging, or flat)';
+ $('batSlopeNote').textContent=sl==null?state?.maintenance_active?'paused during maintenance':batFrom(now)>now-21600?'needs at least 1 h of readings since maintenance':'needs at least 1 h of readings':sl<0?`about ${durText(Math.max(0,(batPoints[batPoints.length-1].mv-3500)/-sl*3600))} to 3.5 V at this rate (rough)`:'not discharging (charging, or flat)';
 }
 function drawBat(){
  const width=batCanvas.clientWidth, height=170, left=60, right=16, top=12, plotH=height-top-30, plotW=width-left-right;
