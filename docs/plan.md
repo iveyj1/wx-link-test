@@ -51,7 +51,9 @@ Done on Nov 17 (05:00-05:40):
 7. (Done) Final build flashed 05:33 (session bb3ed4fa), 11/11 packets in 10 minutes, tagged `feather-m0-w9`.
 
 ### C. Rebuild and deployment (needs hands)
-1. Wire wind reed (D5) and rain reed (D10) with 1 k + 100 nF filters; wiggle test with `raw_edges` in `!status`.
+1. (Wired, Nov 18) Wind reed (D5) and rain reed (D10) with filters. Hand test 00:11: 59 pulses = 118 edges, 10 tips =
+   20 edges, all reaching the host; two earlier runs showed bounce (~1 extra edge per 1.5 pulses) and one with no rain
+   edges. Still to do: wiggle test with `raw_edges` in `!status`.
 2. D2: meter the calm floor at the battery lead (unplug USB, then reset) and the RYLR998 alone (expect ~10 uA).
 3. New bearing housing if ready; repeat the spin-down.
 4. Deploy; `./maint.py stop` (closes window 6); 30-day soak. Judge it from `/api/hourly`.
