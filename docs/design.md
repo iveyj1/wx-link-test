@@ -35,7 +35,7 @@ reference page (`/reference.html`, source `web/reference.html`).
 ### Air temperature and humidity (SHT31)
 * On the same bus as the BMP180, at 0x44 (or 0x45). Single-shot, high-repeatability measurements at most every 30 s inside a report; both words are CRC-8 checked (`link/Sht31.h`, tested natively). Readings older than 5 min are sent as 0; an absent sensor is probed again every minute.
 * The measurement is polled until the sensor answers. A genuine SHT31 needs 15.5 ms at most; the first chip fitted (Nov 16) acknowledged commands but never delivered a measurement and was replaced.
-* Stored per packet (`air_temp_c`, `rh_pct`) and one row a minute in `climate` (400 days). Fault sensor name: `air`.
+* Stored per packet (`air_temp_c`, `rh_pct`) and one row a minute in `climate` (400 days). Fault sensor name: `air`. Dew point is computed from these (Magnus formula, Sonntag constants) in `/api/weather` (`d`, `dlo`, `dhi`) and in the page for the live card; it is not stored.
 * It reads air temperature only when mounted outside the enclosure in a radiation shield. The BMP180's temperature is the enclosure's.
 
 ### I2C bus (software driver)

@@ -99,7 +99,14 @@
     }
     return covered?{avg:sum/covered,covered,calm,count}:null;
   }
-  const api={labels,convert,stats,niceScale,tickLabel,calmSeries,timeAverage,liveCalmStart,bucketAverage};
+  // Dew point, deg C, from air temperature (deg C) and relative humidity (%): Magnus formula,
+  // Sonntag (1990) constants over water (within ~0.1 deg C from -45 to 60 deg C). Same as the server.
+  function dewPoint(tempC, rh) {
+    if (tempC==null || rh==null || !(rh>0)) return null;
+    const g=Math.log(Math.min(rh,100)/100)+17.62*tempC/(243.12+tempC);
+    return 243.12*g/(17.62-g);
+  }
+  const api={labels,dewPoint,convert,stats,niceScale,tickLabel,calmSeries,timeAverage,liveCalmStart,bucketAverage};
   if(typeof module!=='undefined' && module.exports) module.exports=api;
   else root.WindMath=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

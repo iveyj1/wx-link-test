@@ -487,6 +487,10 @@ function paintWx(){
  $('aUnit').textContent=tUnits==='F'?'°F':'°C';
  $('aNow').textContent=air?pad(tVal(p.air_temp_c),1,3):'—';
  $('hNow').textContent=air?pad(p.rh_pct,1,3):'—';
+ const dp=air?WindMath.dewPoint(p.air_temp_c,p.rh_pct):null;
+ $('dUnit').textContent=tUnits==='F'?'°F':'°C';
+ $('dNow').textContent=dp==null?'—':pad(tVal(dp),1,3);
+ $('dNote').textContent=dp==null?'from SHT31 temperature and humidity':`${((p.air_temp_c-dp)*(tUnits==='F'?9/5:1)).toFixed(1)} ${tUnits==='F'?'°F':'°C'} below air temperature${p.air_temp_c-dp<2.5?' · dew or fog likely':''}`;
  $('aNote').textContent=air?`SHT31 at last packet, ${durText(Math.max(0,now-p.received))} ago`:p&&p.version>='W9'?'No reading: SHT31 not answering':'Needs sensor firmware W9 and an SHT31';
  if(activeFault('air'))$('aNote').textContent='AIR SENSOR FAULT: not trusted · '+$('aNote').textContent;
  const ago=pressureAgo(now,10800);
@@ -527,6 +531,7 @@ function drawWx(){
  const tr=drawBand($('tChart'),wxPoints.map(p=>({t0:p.t0,mean:tVal(p.c),lo:tVal(p.clo),hi:tVal(p.chi)})),start,wxRange,v=>v.toFixed(1),`Enclosure temperature, ${tu}`,'#ff9f6c');
  drawBand($('aChart'),wxAir.map(p=>({t0:p.t0,mean:tVal(p.c),lo:tVal(p.clo),hi:tVal(p.chi)})),start,wxRange,v=>v.toFixed(1),`Air temperature (SHT31), ${tu}`,'#6cc4ff');
  drawBand($('hChart'),wxAir.map(p=>({t0:p.t0,mean:p.h,lo:p.hlo,hi:p.hhi})),start,wxRange,v=>v.toFixed(0),'Relative humidity, %','#5fd3a0');
+ drawBand($('dChart'),wxAir.filter(p=>p.d!=null).map(p=>({t0:p.t0,mean:tVal(p.d),lo:tVal(p.dlo),hi:tVal(p.dhi)})),start,wxRange,v=>v.toFixed(1),`Dew point (from SHT31), ${tu}`,'#4fb8c8');
  $('wxScale').textContent=pr?`Pressure ${pr} ${pu} · temperature ${tr} ${tu} · last ${durText(wxRange)}`:state?.maintenance_active&&state.latest?.pressure_pa!=null?'No readings outside maintenance in this range yet (readings during maintenance are hidden)':'No pressure readings in this range yet (sensor firmware W7 with a BMP180)';
  paintWx();
 }

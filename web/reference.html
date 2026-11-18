@@ -257,7 +257,7 @@ sensor's readings only.</li>
 <tr><td>packets</td><td>Every decoded packet (RSSI, SNR, counters, battery, sensors)</td><td>7 days</td></tr>
 <tr><td>samples</td><td>One row per wind revolution measurement</td><td>7 days</td></tr>
 <tr><td>rain</td><td>Tips with time and interval</td><td>400 days</td></tr>
-<tr><td>weather · climate</td><td>Pressure and enclosure temperature · air temperature and humidity, 1 row/min</td><td>400 days</td></tr>
+<tr><td>weather · climate</td><td>Pressure and enclosure temperature · air temperature and humidity, 1 row/min (dew point is computed from these when read, not stored)</td><td>400 days</td></tr>
 <tr><td>hourly</td><td>Per hour: packets received and missed, battery mean/min/max, RSSI and SNR mean/min (<code>/api/hourly</code>)</td><td>400 days</td></tr>
 <tr><td>runs · gaps</td><td>Sensor sessions · reception gaps</td><td>400 days</td></tr>
 <tr><td>maintenance · faults</td><td>Windows</td><td>kept</td></tr>

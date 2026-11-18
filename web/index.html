@@ -63,11 +63,13 @@
 <div class="card"><div class="muted">Enclosure temperature</div><div class="number"><span id="tNow">—</span> <small id="tUnit">°C</small></div><div class="caption" id="tNote">BMP180 inside the sensor box: sun and electronics warm it, so it is not air temperature</div></div>
 <div class="card"><div class="muted">Air temperature</div><div class="number"><span id="aNow">—</span> <small id="aUnit">°C</small></div><div class="caption" id="aNote">Needs sensor firmware W9 and an SHT31</div></div>
 <div class="card"><div class="muted">Relative humidity</div><div class="number"><span id="hNow">—</span> <small>%</small></div><div class="caption" id="hNote">SHT31, outside the box in a radiation shield</div></div>
+<div class="card"><div class="muted">Dew point</div><div class="number"><span id="dNow">—</span> <small id="dUnit">°C</small></div><div class="caption" id="dNote">from SHT31 temperature and humidity</div></div>
 </div>
 <canvas id="pChart" role="img" aria-label="Pressure history"></canvas>
 <canvas id="tChart" role="img" aria-label="Enclosure temperature history" style="margin-top:10px"></canvas>
 <canvas id="aChart" role="img" aria-label="Air temperature history" style="margin-top:10px"></canvas>
 <canvas id="hChart" role="img" aria-label="Relative humidity history" style="margin-top:10px"></canvas>
+<canvas id="dChart" role="img" aria-label="Dew point history" style="margin-top:10px"></canvas>
 <div class="foot"><span id="wxScale"></span><span>Line = mean per interval · band = min–max · one reading per minute is stored (kept 400 days) · maintenance windows left out</span></div>
 <details style="margin-top:12px"><summary>Pressure and temperature settings</summary><div class="controls">
 <label>Station altitude, m<input id="altitude" type="number" min="-500" max="9000" step="any" placeholder="0 = station pressure"></label>

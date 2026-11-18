@@ -59,12 +59,22 @@ def ensure_faults_table(db):
             db.execute('DROP TABLE faults_old')
 
 
+def dew_point(temp_c, rh_pct):
+    """Dew point (deg C) by the Magnus formula with Sonntag (1990) constants over water,
+    within about 0.1 deg C from -45 to 60 deg C. None for missing or non-positive humidity."""
+    if temp_c is None or rh_pct is None or rh_pct <= 0:
+        return None
+    g = math.log(min(rh_pct, 100) / 100) + 17.62 * temp_c / (243.12 + temp_c)
+    return 243.12 * g / (17.62 - g)
+
+
 class Store:
     def __init__(self, path):
         self.lock = threading.RLock()
         self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.path = Path(path)
         self.db.row_factory = sqlite3.Row
+        self.db.create_function('dewpoint', 2, dew_point, deterministic=True)
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript('''
           CREATE TABLE IF NOT EXISTS samples (
@@ -405,7 +415,9 @@ class Store:
                 dict(s=start, e=end, b=bucket)).fetchall()
             air = self.db.execute(
                 'SELECT :s + CAST((t - :s) / :b AS INTEGER) * :b AS t0, AVG(temp_c) AS c, MIN(temp_c) AS clo, '
-                'MAX(temp_c) AS chi, AVG(rh_pct) AS h, MIN(rh_pct) AS hlo, MAX(rh_pct) AS hhi, COUNT(*) AS n '
+                'MAX(temp_c) AS chi, AVG(rh_pct) AS h, MIN(rh_pct) AS hlo, MAX(rh_pct) AS hhi, '
+                'AVG(dewpoint(temp_c, rh_pct)) AS d, MIN(dewpoint(temp_c, rh_pct)) AS dlo, '
+                'MAX(dewpoint(temp_c, rh_pct)) AS dhi, COUNT(*) AS n '
                 f'FROM climate WHERE t >= :s AND t < :e AND {CLIMATE_OK} GROUP BY t0 ORDER BY t0',
                 dict(s=start, e=end, b=bucket)).fetchall()
             return dict(start=start, end=end, bucket=bucket, points=[dict(r) for r in rows], now=time.time(),

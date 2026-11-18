@@ -1,5 +1,5 @@
 const assert=require('node:assert/strict');
-const {convert,stats,niceScale,tickLabel,calmSeries,timeAverage}=require('./web/math.js');
+const {dewPoint,convert,stats,niceScale,tickLabel,calmSeries,timeAverage}=require('./web/math.js');
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-10,`${a} != ${b}`);
 near(convert(2,'knots',3,1),7);
 near(convert(2,'mph',3,1),7*1852/1609.344);
@@ -57,3 +57,9 @@ near(bucketAverage(bk,0,1000).avg,timeAverage(spans,0,1000).avg);
 near(bucketAverage(bk,0,1000,hz=>2*hz+0.5).avg,timeAverage(spans,0,1000,hz=>2*hz+0.5).avg);
 assert.equal(bucketAverage(bk,10,1000),null);       // bucket starts outside the strip
 console.log('PASS: calibration, all units, zero clamp, sample statistics, preferred ticks and labels, deduced calm, time-weighted average, live calm certainty, bucket average');
+// Dew point: saturated air dews at its own temperature; reference values (Magnus/Sonntag).
+near(dewPoint(20,100),20);
+assert.ok(Math.abs(dewPoint(20,50)-9.26)<0.02);
+assert.ok(Math.abs(dewPoint(0,80)+3.0)<0.1);
+assert.equal(dewPoint(20,0),null);
+assert.equal(dewPoint(null,50),null);

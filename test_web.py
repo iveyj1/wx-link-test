@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from http.server import ThreadingHTTPServer
 from monitor import decode
-from web_server import Store, handler_for
+from web_server import Store, dew_point, handler_for
 
 
 def packet(revs=1, seq=1, age=328, session='abcd1234', uptime=100000):
@@ -187,6 +187,11 @@ class WebTests(unittest.TestCase):
         self.assertIsNone(self.store.latest['air_temp_c'])
         air = self.store.weather(now, now + 600, 600)['air']
         self.assertEqual((air[0]['n'], air[0]['clo'], air[0]['chi'], air[0]['h']), (2, 23.8, 24.8, 50.5))
+        self.assertAlmostEqual(air[0]['dlo'], dew_point(23.8, 50.0))
+        self.assertAlmostEqual(air[0]['dhi'], dew_point(24.8, 51.0))
+        self.assertAlmostEqual(dew_point(20, 50), 9.26, delta=0.02)
+        self.assertEqual(dew_point(20, 100), 20)
+        self.assertIsNone(dew_point(20, 0))
         self.store.db.execute("INSERT INTO faults(sensor, start, end, note) VALUES('air', ?, ?, '')", (now + 30, now + 100))
         self.assertEqual(self.store.weather(now, now + 600, 600)['air'][0]['n'], 1)
 
